@@ -1,8 +1,6 @@
 #ifndef STORE_H
 #define STORE_H
 
-#include <stddef.h>
-
 #define STORE_CAPACITY  64
 #define STORE_KEY_MAX   32
 #define STORE_VALUE_MAX 128

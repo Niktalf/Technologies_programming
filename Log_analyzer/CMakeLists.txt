@@ -7,6 +7,8 @@ add_library(
         log_analyzer_core
         src/log_file.c
         src/shell.c
+        src/time_stamp.c
+        src/level.c
 )
 target_include_directories(log_analyzer_core PUBLIC include)
 

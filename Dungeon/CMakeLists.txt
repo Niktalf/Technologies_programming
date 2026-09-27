@@ -8,6 +8,7 @@ add_library(
         src/command.c
         src/game.c
         src/map.c
+        src/hero.c
 )
 target_include_directories(dungeon_core PUBLIC include)
 

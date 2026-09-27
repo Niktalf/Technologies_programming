@@ -24,7 +24,7 @@ static int run_batch(const int argc, char **argv)
     editor_init(&editor);
     editor_set_path(&editor, argv[1]);
 
-    Operation operation = operation_from_word(argv[2]);
+    const Operation operation = operation_from_word(argv[2]);
     if (operation == OP_UNKNOWN) {
         fprintf(stderr, "Unknown operation: %s\n", argv[2]);
         return 1;

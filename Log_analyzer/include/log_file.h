@@ -1,8 +1,6 @@
 #ifndef LOGFILE_H
 #define LOGFILE_H
 
-#include <stddef.h>
-
 #define LOGFILE_TAIL_SIZE 10
 #define LOGFILE_LINE_MAX  512
 #define LOGFILE_HEAD_SIZE 10

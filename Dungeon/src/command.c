@@ -43,7 +43,7 @@ static void to_lower(char *buffer)
     }
 }
 
-Command command_read(void)
+Command command_read()
 {
     char buffer[COMMAND_BUFFER_SIZE];
 
@@ -67,6 +67,18 @@ Command command_read(void)
     if (strcmp(buffer, "look") == 0) {
         return CMD_LOOK;
     }
+    if (strcmp(buffer, "status") == 0) {
+        return CMD_STATUS;
+    }
+    if (strcmp(buffer, "hit") == 0) {
+        return CMD_HIT;
+    }
+    if (strcmp(buffer, "rest") == 0) {
+        return CMD_REST;
+    }
+    if (strcmp(buffer, "poison") == 0) {
+        return CMD_POISON;
+    }
     if (strcmp(buffer, "help") == 0) {
         return CMD_HELP;
     }
@@ -76,7 +88,7 @@ Command command_read(void)
     return CMD_UNKNOWN;
 }
 
-const char *command_last_word(void)
+const char *command_last_word()
 {
     return last_word;
 }

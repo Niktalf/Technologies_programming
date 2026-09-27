@@ -11,7 +11,7 @@ void logfile_init(LogFile *log)
     memset(log, 0, sizeof *log);
 }
 
-const char *logfile_status_text(const LogStatus status)
+const char *logfile_status_text(LogStatus status)
 {
     switch (status) {
     case LOG_OK:       return "success";
@@ -90,7 +90,7 @@ void logfile_print_tail(const LogFile *log, int count)
     if (limit > log->total) {
         limit = log->total;
     }
-    long first = log->total - limit;
+    const long first = log->total - limit;
     for (long i = first; i < log->total; ++i) {
         printf("%ld: %s\n", i + 1, log->tail[i % LOGFILE_TAIL_SIZE]);
     }

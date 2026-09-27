@@ -3,19 +3,21 @@
 #include <string.h>
 
 #include "cli.h"
+#include "record.h"
 
 #define CLI_LINE_MAX  256
 #define CLI_ARGS_MAX  8
 
-void cli_print_help()
+void cli_print_help(void)
 {
     printf("Available commands:\n");
-    printf("  put <key> <value> - save a pair\n");
-    printf("  get <key>         - get a value\n");
-    printf("  del <key>         - delete a pair\n");
-    printf("  list              - list all keys\n");
-    printf("  help              - this list\n");
-    printf("  quit              - exit\n");
+    printf("  put <key> <value>     - save a pair\n");
+    printf("  get <key>             - get a value\n");
+    printf("  del <key>             - delete a pair\n");
+    printf("  list                  - list all keys\n");
+    printf("  record <key> <value>  - collect a log entry and verify it\n");
+    printf("  help                  - this list\n");
+    printf("  quit                  - exit\n");
 }
 
 static void report(const StoreStatus status)
@@ -23,7 +25,45 @@ static void report(const StoreStatus status)
     fprintf(stderr, "Error: %s\n", store_status_text(status));
 }
 
-int cli_execute(Store *store, const int argc, char **argv)
+static void demo_record(const char *key, const char *value)
+{
+    uint8_t buffer[512];
+    size_t size = 0;
+
+    RecordStatus status = record_build(buffer, sizeof buffer,
+                                       record_flags_set(0, RECORD_FLAG_PUT), key, value, &size);
+    if (status != RECORD_OK) {
+        fprintf(stderr, "Build error: %s\n", record_status_text(status));
+        return;
+    }
+
+    printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n",
+           size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
+    printf("bytes: ");
+    for (size_t i = 0; i < size; ++i) {
+        printf("%02X ", (unsigned)buffer[i]);
+    }
+    printf("\n");
+    RecordHeader header;
+    status = record_parse(buffer, size, &header);
+    printf("Parsing: %s\n", record_status_text(status));
+    record_flags_print(header.flags);
+    printf("Key length: %u, value length: %u, sum: 0x%02X\n",
+           (unsigned)header.key_length, (unsigned)header.value_length,
+           (unsigned)header.checksum);
+
+    buffer[size - 1] = (uint8_t)(buffer[size - 1] ^ 0x01u);
+    status = record_parse(buffer, size, &header);
+    printf("After corrupting the last byte: %s\n", record_status_text(status));
+    buffer[size - 1] = (uint8_t)(buffer[size - 1] ^ 0x01u);
+
+    buffer[2] = (uint8_t)(buffer[2] ^ 0x01u);
+    status = record_parse(buffer, size, &header);
+    printf("After key length corruption: %s\n", record_status_text(status));
+    buffer[2] = (uint8_t)(buffer[2] ^ 0x01u);
+}
+
+int cli_execute(Store *store, int argc, char **argv)
 {
     if (argc == 0) {
         return 1;
@@ -34,6 +74,7 @@ int cli_execute(Store *store, const int argc, char **argv)
             fprintf(stderr, "put requires a key and a value\n");
             return 1;
         }
+
         int was_present = 0;
         const StoreStatus status = store_put(store, argv[1], argv[2], &was_present);
         if (status != STORE_OK) {
@@ -49,7 +90,6 @@ int cli_execute(Store *store, const int argc, char **argv)
             fprintf(stderr, "get requires a key\n");
             return 1;
         }
-
         const char *value = NULL;
         const StoreStatus status = store_get(store, argv[1], &value);
         if (status != STORE_OK) {
@@ -65,7 +105,7 @@ int cli_execute(Store *store, const int argc, char **argv)
             fprintf(stderr, "del requires a key\n");
             return 1;
         }
-        StoreStatus status = store_remove(store, argv[1]);
+        const StoreStatus status = store_remove(store, argv[1]);
         if (status != STORE_OK) {
             report(status);
         } else {
@@ -75,13 +115,12 @@ int cli_execute(Store *store, const int argc, char **argv)
     }
 
     if (strcmp(argv[0], "list") == 0) {
-        int i;
-        int total = store_count(store);
+        const int total = store_count(store);
 
         if (total == 0) {
             printf("The storage is empty.\n");
         }
-        for (i = 0; i < total; ++i) {
+        for (int i = 0; i < total; ++i) {
             const char *key = NULL;
             const char *value = NULL;
 
@@ -89,6 +128,15 @@ int cli_execute(Store *store, const int argc, char **argv)
                 printf("%s = %s\n", key, value);
             }
         }
+        return 1;
+    }
+
+    if (strcmp(argv[0], "record") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "record requires a key and a value\n");
+            return 1;
+        }
+        demo_record(argv[1], argv[2]);
         return 1;
     }
 
@@ -105,7 +153,6 @@ int cli_execute(Store *store, const int argc, char **argv)
     return 1;
 }
 
-/* Разбивает строку на слова по пробелам. Кавычки появятся на практике 6. */
 static int split_words(char *line, char **argv, const int max_args)
 {
     int argc = 0;

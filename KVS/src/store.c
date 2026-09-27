@@ -74,6 +74,7 @@ StoreStatus store_get(const Store *store, const char *key, const char **out_valu
     if (index < 0) {
         return STORE_ERR_NOT_FOUND;
     }
+
     *out_value = store->values[index];
     return STORE_OK;
 }
@@ -83,6 +84,7 @@ StoreStatus store_remove(Store *store, const char *key)
     if (store == NULL || key == NULL) {
         return STORE_ERR_ARG;
     }
+
     const int index = find_index(store, key);
     if (index < 0) {
         return STORE_ERR_NOT_FOUND;
@@ -106,9 +108,11 @@ StoreStatus store_at(const Store *store, const int index, const char **out_key, 
     if (store == NULL || out_key == NULL || out_value == NULL) {
         return STORE_ERR_ARG;
     }
+
     if (index < 0 || index >= store->count) {
         return STORE_ERR_NOT_FOUND;
     }
+
     *out_key = store->keys[index];
     *out_value = store->values[index];
     return STORE_OK;
