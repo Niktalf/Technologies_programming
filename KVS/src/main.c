@@ -1,10 +1,10 @@
 #include "cli.h"
 #include "store.h"
 
+static Store store;
+
 int main(int argc, char **argv)
 {
-    Store store;
-
     store_init(&store);
 
     if (argc > 1) {

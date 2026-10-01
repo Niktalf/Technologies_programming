@@ -1,65 +1,154 @@
+#include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "commands.h"
 #include "pixel.h"
 
-Operation operation_from_word(const char *word)
+static int is_command(const char *word, const char *name)
 {
-    if (word == NULL || word[0] == '\0') {
-        return OP_EMPTY;
+    size_t i;
+
+    for (i = 0; word[i] != '\0' && name[i] != '\0'; ++i) {
+        if (tolower((unsigned char)word[i]) != name[i]) {
+            return 0;
+        }
     }
-    if (strcmp(word, "info") == 0) {
-        return OP_INFO;
-    }
-    if (strcmp(word, "colors") == 0) {
-        return OP_COLORS;
-    }
-    if (strcmp(word, "help") == 0) {
-        return OP_HELP;
-    }
-    if (strcmp(word, "quit") == 0 || strcmp(word, "exit") == 0) {
-        return OP_QUIT;
-    }
-    return OP_UNKNOWN;
+    return word[i] == '\0' && name[i] == '\0';
 }
 
-void commands_print_help()
+static int parse_int(const char *word, int *out)
+{
+    char *end = NULL;
+    const long value = strtol(word, &end, 10);
+
+    if (end == word || *end != '\0') {
+        return 0;
+    }
+    *out = (int)value;
+    return 1;
+}
+
+void commands_print_help(void)
 {
     printf("Available operations:\n");
-    printf("  info      - information about the current image\n");
-    printf("  colors    - checking color operations\n");
-    printf("  help      - this list\n");
-    printf("  quit      - exit\n");
+    printf("  info                    - information about the image\n");
+    printf("  gen gradient            - gradient from black to white\n");
+    printf("  gen checker [cell]      - checkerboard, default cell is 32\n");
+    printf("  gen stripes [number]    - colored stripes, default is 8\n");
+    printf("  invert                  - inversion\n");
+    printf("  bright <number>         - brightness, for example bright 40 or bright -40\n");
+    printf("  save <file>             - save to PPM\n");
+    printf("  colors                  - check color operations\n");
+    printf("  help                    - this list\n");
+    printf("  quit                    - exit\n");
 }
 
-int operation_execute(const Operation operation, const Editor *editor, const char *raw_word)
+static int require_image(const Editor *editor)
 {
-    switch (operation) {
-    case OP_INFO:
-        editor_print_info(editor);
-        return 1;
-    case OP_COLORS:
-        commands_demo_colors();
-        return 1;
-    case OP_HELP:
-        commands_print_help();
-        return 1;
-    case OP_EMPTY:
-        return 1;
-    case OP_QUIT:
-    case OP_EOF:
+    if (!editor->loaded) {
+        printf("There is no image. Create it using the command gen.\n");
         return 0;
-    case OP_UNKNOWN:
-    default:
-        fprintf(stderr, "Unknown operation: %s\n", raw_word != NULL ? raw_word : "");
-        fprintf(stderr, "Type help to see the list of operations.\n");
+    }
+    return 1;
+}
+
+static void do_gen(Editor *editor, const Words *words)
+{
+    int parameter = 0;
+
+    if (words->count < 2) {
+        printf("Specify the type: gradient, checker, or stripes\n");
+        return;
+    }
+    if (words->count >= 3 && !parse_int(words->word[2], &parameter)) {
+        printf("Not a number: %s\n", words->word[2]);
+        return;
+    }
+
+    if (is_command(words->word[1], "gradient")) {
+        image_gradient(&editor->image);
+    } else if (is_command(words->word[1], "checker")) {
+        image_checker(&editor->image, words->count >= 3 ? parameter : 32);
+    } else if (is_command(words->word[1], "stripes")) {
+        image_stripes(&editor->image, words->count >= 3 ? parameter : 8);
+    } else {
+        printf("Unknown type: %s\n", words->word[1]);
+        return;
+    }
+    editor->loaded = 1;
+    printf("The image has been created.\n");
+}
+
+static void do_bright(Editor *editor, const Words *words)
+{
+    int delta;
+
+    if (!require_image(editor)) {
+        return;
+    }
+    if (words->count < 2 || !parse_int(words->word[1], &delta)) {
+        printf("Enter a number, for example, bright 40\n");
+        return;
+    }
+    image_brightness(&editor->image, delta);
+    printf("Brightness changed to %d.\n", delta);
+}
+
+static void do_save(Editor *editor, const Words *words)
+{
+    if (!require_image(editor)) {
+        return;
+    }
+    const char *path = words->count >= 2 ? words->word[1] : editor->path;
+    if (path[0] == '\0') {
+        printf("Specify the file name: save <файл>\n");
+        return;
+    }
+    if (!image_save_ppm(&editor->image, path)) {
+        printf("Failed to write file: %s\n", path);
+        return;
+    }
+    editor_set_path(editor, path);
+    printf("Recorded: %s\n", path);
+}
+
+int commands_execute(Editor *editor, const Words *words)
+{
+    if (words->count == 0) {
         return 1;
     }
+
+    const char *name = words->word[0];
+    if (is_command(name, "info")) {
+        editor_print_info(editor);
+    } else if (is_command(name, "gen")) {
+        do_gen(editor, words);
+    } else if (is_command(name, "invert")) {
+        if (require_image(editor)) {
+            image_invert(&editor->image);
+            printf("Inverted.\n");
+        }
+    } else if (is_command(name, "bright")) {
+        do_bright(editor, words);
+    } else if (is_command(name, "save")) {
+        do_save(editor, words);
+    } else if (is_command(name, "colors")) {
+        commands_demo_colors();
+    } else if (is_command(name, "help")) {
+        commands_print_help();
+    } else if (is_command(name, "quit") || is_command(name, "exit")) {
+        return 0;
+    } else {
+        printf("Unknown operation: %s\n", name);
+        printf("Type help to see the list of operations.\n");
+    }
+    return 1;
 }
 
-void commands_demo_colors(void)
+void commands_demo_colors()
 {
     static const Pixel SAMPLES[] = {
         0x000000u,
@@ -87,10 +176,8 @@ void commands_demo_colors(void)
                (unsigned)pixel_to_gray(p));
     }
 
-    {
-        const Pixel p = pixel_pack(17, 200, 255);
-        printf("\nPackaging reversibility: %u %u %u -> 0x%06X -> %u %u %u\n",
-               17u, 200u, 255u, (unsigned)p,
-               (unsigned)pixel_red(p), (unsigned)pixel_green(p), (unsigned)pixel_blue(p));
-    }
+    const Pixel p = pixel_pack(17, 200, 255);
+    printf("\nPackaging reversibility: %u %u %u -> 0x%06X -> %u %u %u\n",
+        17u, 200u, 255u, (unsigned)p,
+        (unsigned)pixel_red(p), (unsigned)pixel_green(p), (unsigned)pixel_blue(p));
 }

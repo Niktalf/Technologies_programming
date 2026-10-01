@@ -2,9 +2,6 @@
 
 #include "time_stamp.h"
 
-/* Каждое поле умножается на диапазон всех младших полей.
-   Такая упаковка не считает дни в году, зато сохраняет порядок,
-   а больше от неё на практике 2 ничего не требуется. */
 #define MONTHS_IN_YEAR  12
 #define DAYS_IN_MONTH   31
 #define HOURS_IN_DAY    24
@@ -17,7 +14,7 @@ TimeStamp timestamp_pack(const int year, const int month, const int day, const i
         || hour < 0 || hour > 23 || minute < 0 || minute > 59
         || second < 0 || second > 59) {
         return TIMESTAMP_INVALID;
-    }
+        }
 
     TimeStamp value = year;
     value = value * MONTHS_IN_YEAR + (month - 1);
@@ -28,7 +25,8 @@ TimeStamp timestamp_pack(const int year, const int month, const int day, const i
     return value;
 }
 
-void timestamp_unpack(TimeStamp value, int *year, int *month, int *day, int *hour, int *minute, int *second)
+void timestamp_unpack(TimeStamp value, int *year, int *month, int *day,
+                      int *hour, int *minute, int *second)
 {
     if (value < 0) {
         return;
@@ -51,5 +49,5 @@ int timestamp_hour(const TimeStamp value)
     if (value < 0) {
         return -1;
     }
-    return (int)((value / (SECONDS_IN_MIN * MINUTES_IN_HOUR)) % HOURS_IN_DAY);
+    return (int)(value / (SECONDS_IN_MIN * MINUTES_IN_HOUR) % HOURS_IN_DAY);
 }

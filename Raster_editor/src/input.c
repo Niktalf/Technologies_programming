@@ -4,34 +4,43 @@
 
 #include "input.h"
 
-int input_read_line(char *buffer, size_t size)
+static void lower_first_word(const Words *words)
 {
-    if (buffer == NULL || size == 0) {
+    if (words->count == 0) {
+        return;
+    }
+    for (int i = 0; words->word[0][i] != '\0'; ++i) {
+        words->word[0][i] = (char)tolower((unsigned char)words->word[0][i]);
+    }
+}
+
+int input_read_words(Words *words)
+{
+    words->count = 0;
+
+    if (fgets(words->line, INPUT_LINE_MAX, stdin) == NULL) {
         return 0;
     }
-    if (fgets(buffer, (int)size, stdin) == NULL) {
-        buffer[0] = '\0';
-        return 0;
-    }
-    if (strchr(buffer, '\n') == NULL) {
+
+    if (strchr(words->line, '\n') == NULL) {
         int c;
         while ((c = getchar()) != EOF && c != '\n') {}
     }
 
-    size_t length = strlen(buffer);
-    while (length > 0 && isspace((unsigned char)buffer[length - 1])) {
-        buffer[--length] = '\0';
+    char *token = strtok(words->line, " \t\r\n");
+    while (token != NULL && words->count < INPUT_WORDS_MAX) {
+        words->word[words->count++] = token;
+        token = strtok(NULL, " \t\r\n");
     }
-
-    size_t start = 0;
-    while (buffer[start] != '\0' && isspace((unsigned char)buffer[start])) {
-        ++start;
-    }
-    if (start > 0) {
-        memmove(buffer, buffer + start, strlen(buffer + start) + 1);
-    }
-    for (size_t i = 0; buffer[i] != '\0'; ++i) {
-        buffer[i] = (char)tolower((unsigned char)buffer[i]);
-    }
+    lower_first_word(words);
     return 1;
+}
+
+void input_from_args(Words *words, const int argc, char **argv)
+{
+    words->count = 0;
+    words->line[0] = '\0';
+    for (int i = 0; i < argc && i < INPUT_WORDS_MAX; ++i) {
+        words->word[words->count++] = argv[i];
+    }
 }

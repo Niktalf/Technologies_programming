@@ -9,6 +9,7 @@ add_library(
         src/editor.c
         src/input.c
         src/pixel.c
+        src/image.c
 )
 target_include_directories(raster_editor_core PUBLIC include)
 

@@ -1,7 +1,6 @@
 #ifndef RECORD_H
 #define RECORD_H
 
-#include <stddef.h>
 #include <stdint.h>
 
 #define RECORD_HEADER_SIZE 8
