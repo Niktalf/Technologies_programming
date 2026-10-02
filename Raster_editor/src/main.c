@@ -4,8 +4,6 @@
 #include "editor.h"
 #include "input.h"
 
-/* Редактор весит больше 256 КБ из-за изображения внутри,
-   поэтому он статический: в стеке функции он бы не поместился. */
 static Editor editor;
 
 static void print_usage(const char *program_name)
@@ -42,10 +40,11 @@ static int run_once(const int argc, char **argv)
 
 static void run_interactive()
 {
-    editor_init(&editor);
-    printf("Bitmap editor. Type help for a list of operations.\n");
-
     Words words;
+
+    editor_init(&editor);
+    printf("Bitmap editor. Type 'help' for a list of operations.\n");
+
     while (1) {
         printf("> ");
         fflush(stdout);

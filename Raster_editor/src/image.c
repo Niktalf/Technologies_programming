@@ -54,7 +54,8 @@ void image_checker(Image *image, int cell)
     for (int y = 0; y < image->height; ++y) {
         for (int x = 0; x < image->width; ++x) {
             const int dark = ((x / cell) + (y / cell)) % 2;
-            image_set(image, x, y, dark ? pixel_pack(40, 40, 40) : pixel_pack(220, 220, 220));
+            image_set(image, x, y, dark ? pixel_pack(40, 40, 40) :
+                pixel_pack(220, 220, 220));
         }
     }
 }

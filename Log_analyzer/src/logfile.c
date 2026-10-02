@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "log_file.h"
+#include "logfile.h"
 #include "parse.h"
 
 void logfile_init(LogFile *log)
@@ -15,6 +15,7 @@ void logfile_init(LogFile *log)
     log->overflow = 0;
     log->truncated = 0;
     log->loaded = 0;
+    log->sorted = 0;
     log->path[0] = '\0';
 }
 

@@ -7,9 +7,9 @@
 #define RECORD_KEY_MAX     0xFFFFu
 #define RECORD_VALUE_MAX   0x00FFFFFFu
 
-#define RECORD_FLAG_PUT       (1u << 0)
-#define RECORD_FLAG_TOMBSTONE (1u << 1)
-#define RECORD_FLAG_COMPRESSED (1u << 2)
+#define RECORD_FLAG_PUT         (1u << 0)
+#define RECORD_FLAG_TOMBSTONE   (1u << 1)
+#define RECORD_FLAG_COMPRESSED  (1u << 2)
 
 typedef struct {
     uint8_t  flags;

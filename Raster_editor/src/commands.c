@@ -1,10 +1,9 @@
 #include <ctype.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #include "commands.h"
+#include "fill.h"
 #include "pixel.h"
 
 static int is_command(const char *word, const char *name)
@@ -31,25 +30,26 @@ static int parse_int(const char *word, int *out)
     return 1;
 }
 
-void commands_print_help(void)
+void commands_print_help()
 {
     printf("Available operations:\n");
-    printf("  info                    - information about the image\n");
-    printf("  gen gradient            - gradient from black to white\n");
-    printf("  gen checker [cell]      - checkerboard, default cell is 32\n");
-    printf("  gen stripes [number]    - colored stripes, default is 8\n");
-    printf("  invert                  - inversion\n");
-    printf("  bright <number>         - brightness, for example bright 40 or bright -40\n");
-    printf("  save <file>             - save to PPM\n");
-    printf("  colors                  - check color operations\n");
-    printf("  help                    - this list\n");
-    printf("  quit                    - exit\n");
+    printf("  info                      - information about the image\n");
+    printf("  gen gradient              - gradient from black to white\n");
+    printf("  gen checker [cell]        - checkerboard, default cell is 32\n");
+    printf("  gen stripes [number]      - colored stripes, default is 8\n");
+    printf("  invert                    - inversion\n");
+    printf("  bright <number>           - brightness, for example bright 40 or bright -40\n");
+    printf("  fill <x> <y> <r> <g> <b>  - fill the area with color\n");
+    printf("  save <file>               - save to PPM\n");
+    printf("  colors                    - check color operations\n");
+    printf("  help                      - this list\n");
+    printf("  quit                      - exit\n");
 }
 
 static int require_image(const Editor *editor)
 {
     if (!editor->loaded) {
-        printf("There is no image. Create it using the command gen.\n");
+        printf("There is no image. Create it using the command 'gen'.\n");
         return 0;
     }
     return 1;
@@ -104,7 +104,7 @@ static void do_save(Editor *editor, const Words *words)
     }
     const char *path = words->count >= 2 ? words->word[1] : editor->path;
     if (path[0] == '\0') {
-        printf("Specify the file name: save <файл>\n");
+        printf("Specify the file name: save <file>\n");
         return;
     }
     if (!image_save_ppm(&editor->image, path)) {
@@ -113,6 +113,44 @@ static void do_save(Editor *editor, const Words *words)
     }
     editor_set_path(editor, path);
     printf("Recorded: %s\n", path);
+}
+
+static void do_fill(Editor *editor, const Words *words)
+{
+    if (!require_image(editor)) {
+        return;
+    }
+    if (words->count < 6) {
+        printf("You need five numbers: fill <x> <y> <r> <g> <b>\n");
+        return;
+    }
+
+    int values[5];
+    for (int i = 0; i < 5; ++i) {
+        if (!parse_int(words->word[i + 1], &values[i])) {
+            printf("Not a number: %s\n", words->word[i + 1]);
+            return;
+        }
+    }
+    if (!image_inside(&editor->image, values[0], values[1])) {
+        printf("Point (%d, %d) in out image\n", values[0], values[1]);
+        return;
+    }
+
+    const FillReport report = fill_region(&editor->image, values[0], values[1],
+                                    pixel_pack(channel_clamp(values[2]),
+                                               channel_clamp(values[3]),
+                                               channel_clamp(values[4])));
+
+    printf("Pixels recolored: %d, maximum recursion depth: %d\n",
+           report.filled, report.max_depth);
+    if (report.filled == 0) {
+        printf("Nothing has changed: the dot is already this color\n");
+    }
+    if (report.truncated) {
+        printf("Filling stopped: area is too large for recursion "
+               "(depth limit %d). Part of the area has not been repainted.\n", FILL_MAX_DEPTH);
+    }
 }
 
 int commands_execute(Editor *editor, const Words *words)
@@ -133,6 +171,8 @@ int commands_execute(Editor *editor, const Words *words)
         }
     } else if (is_command(name, "bright")) {
         do_bright(editor, words);
+    } else if (is_command(name, "fill")) {
+        do_fill(editor, words);
     } else if (is_command(name, "save")) {
         do_save(editor, words);
     } else if (is_command(name, "colors")) {
@@ -143,7 +183,7 @@ int commands_execute(Editor *editor, const Words *words)
         return 0;
     } else {
         printf("Unknown operation: %s\n", name);
-        printf("Type help to see the list of operations.\n");
+        printf("Type 'help' to see the list of operations.\n");
     }
     return 1;
 }

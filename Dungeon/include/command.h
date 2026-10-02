@@ -10,6 +10,7 @@ typedef enum {
     CMD_EAST,
     CMD_WEST,
     CMD_STATUS,
+    CMD_REACH,
     CMD_HIT,
     CMD_REST,
     CMD_POISON,

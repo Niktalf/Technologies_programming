@@ -8,6 +8,7 @@ add_library(
         src/cli.c
         src/store.c
         src/record.c
+        src/range.c
 )
 target_include_directories(kvs_core PUBLIC include)
 

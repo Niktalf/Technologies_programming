@@ -1,8 +1,8 @@
-#ifndef LOG_FILE_H
-#define LOG_FILE_H
+#ifndef LOGFILE_H
+#define LOGFILE_H
 
 #include "level.h"
-#include "time_stamp.h"
+#include "timestamp.h"
 
 #define LOGFILE_LINE_MAX   512
 #define LOGFILE_CAPACITY   10000
@@ -12,7 +12,7 @@
 #define LOGFILE_SHOW       10
 
 typedef struct {
-    TimeStamp time;
+    Timestamp time;
     Level     level;
     char      module[LOGFILE_MODULE_MAX];
     char      text[LOGFILE_TEXT_MAX];
@@ -32,6 +32,7 @@ typedef struct {
     long overflow;
     long truncated;
     int  loaded;
+    int  sorted;
     char path[LOGFILE_PATH_MAX];
 } LogFile;
 
@@ -45,4 +46,4 @@ void logfile_print_record(const LogRecord *record);
 void logfile_print_head(const LogFile *log, int count);
 void logfile_print_tail(const LogFile *log, int count);
 
-#endif // LOG_FILE_H
+#endif // LOGFILE_H

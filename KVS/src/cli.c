@@ -5,18 +5,21 @@
 #include <string.h>
 
 #include "cli.h"
+#include "range.h"
 #include "record.h"
 
 #define CLI_LINE_MAX  256
 #define CLI_ARGS_MAX  8
 
-void cli_print_help(void)
+void cli_print_help()
 {
     printf("Available commands:\n");
     printf("  put <key> <value>     - save a pair\n");
     printf("  get <key>             - get a value\n");
     printf("  del <key>             - delete a pair\n");
     printf("  list                  - list all keys\n");
+    printf("  sorted                - all pairs in ascending order of the key\n");
+    printf("  range <from> <to>     - pairs with keys in the range, boundaries are included\n");
     printf("  stats                 - table occupancy and collisions\n");
     printf("  bench [n]             - compare hash and iteration on n keys\n");
     printf("  collide               - removing samples from the chain\n");
@@ -29,7 +32,6 @@ static void report(const StoreStatus status)
 {
     fprintf(stderr, "Error: %s\n", store_status_text(status));
 }
-
 
 static void demo_record(const char *key, const char *value)
 {
@@ -95,11 +97,8 @@ static double seconds_since(const clock_t start)
     return (double)(clock() - start) / CLOCKS_PER_SEC;
 }
 
-static void run_bench(long n)
+static void run_bench(const long n)
 {
-    long found_hash = 0;
-    long found_linear = 0;
-
     if (n <= 0 || n > STORE_CAPACITY * 9 / 10) {
         printf("The number of keys must be from 1 to %d\n", STORE_CAPACITY * 9 / 10);
         return;
@@ -112,8 +111,9 @@ static void run_bench(long n)
         store_put(&bench_store, key, "v", NULL);
     }
 
-    clock_t start = clock();
+    long found_hash = 0;
     const char *value = NULL;
+    clock_t start = clock();
     for (long i = 0; i < n; ++i) {
         snprintf(key, sizeof key, "key%ld", i);
         if (store_get(&bench_store, key, &value) == STORE_OK) {
@@ -122,6 +122,7 @@ static void run_bench(long n)
     }
     const double t_hash = seconds_since(start);
 
+    long found_linear = 0;
     start = clock();
     for (long i = 0; i < n; ++i) {
         snprintf(key, sizeof key, "key%ld", i);
@@ -129,7 +130,7 @@ static void run_bench(long n)
             ++found_linear;
         }
     }
-    double t_linear = seconds_since(start);
+    const double t_linear = seconds_since(start);
 
     printf("Keys: %ld\n", n);
     printf("Via hash: %ld found for %.4f s\n", found_hash, t_hash);
@@ -140,11 +141,10 @@ static void run_bench(long n)
     print_stats(&bench_store);
 }
 
-static void demo_collision(void)
+static void demo_collision()
 {
     char first[STORE_KEY_MAX];
     char second[STORE_KEY_MAX];
-    const char *value = NULL;
 
     snprintf(first, sizeof first, "a0");
     const int home = store_home(first);
@@ -168,6 +168,7 @@ static void demo_collision(void)
     store_remove(&bench_store, first);
     printf("Deleted %s.\n", first);
 
+    const char *value = NULL;
     if (store_get(&bench_store, second, &value) == STORE_OK) {
         printf("Key %s found: %s\n", second, value);
     } else {
@@ -175,19 +176,19 @@ static void demo_collision(void)
     }
 }
 
-int cli_execute(Store *store, int argc, char **argv)
+int cli_execute(Store *store, const int argc, char **argv)
 {
     if (argc == 0) {
         return 1;
     }
 
     if (strcmp(argv[0], "put") == 0) {
-        int was_present = 0;
-
         if (argc < 3) {
             fprintf(stderr, "put requires a key and a value\n");
             return 1;
         }
+
+        int was_present = 0;
         const StoreStatus status = store_put(store, argv[1], argv[2], &was_present);
         if (status != STORE_OK) {
             report(status);
@@ -232,6 +233,30 @@ int cli_execute(Store *store, int argc, char **argv)
             printf("The storage is empty.\n");
         }
         store_for_each(store, print_pair, NULL);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "sorted") == 0) {
+        int depth = 0;
+        const int found = range_all(store, print_pair, NULL, &depth);
+
+        printf("Everything is there: %d, sorting recursion depth: %d\n", found, depth);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "range") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "range требует две границы\n");
+            return 1;
+        }
+        if (strcmp(argv[1], argv[2]) > 0) {
+            printf("The initial border is larger than the final one: the range is empty.\n");
+            return 1;
+        }
+
+        int depth = 0;
+        const int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
+        printf("Found is: %d, sorting recursion depth: %d\n", found, depth);
         return 1;
     }
 
@@ -302,7 +327,7 @@ void cli_run_interactive(Store *store)
     char *argv[CLI_ARGS_MAX];
     int running = 1;
 
-    printf("Key-value store. Type help for a list of commands.\n");
+    printf("Key-value store. Type 'help' for a list of commands.\n");
 
     while (running) {
         printf("> ");

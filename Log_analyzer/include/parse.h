@@ -1,7 +1,7 @@
 #ifndef PARSE_H
 #define PARSE_H
 
-#include "log_file.h"
+#include "logfile.h"
 
 int parse_line(const char *line, LogRecord *out);
 

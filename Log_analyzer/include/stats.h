@@ -1,7 +1,7 @@
 #ifndef STATS_H
 #define STATS_H
 
-#include "log_file.h"
+#include "logfile.h"
 
 #define STATS_MODULES_MAX 64
 

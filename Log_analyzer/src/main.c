@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "log_file.h"
+#include "logfile.h"
 #include "shell.h"
 
 static LogFile log_file;

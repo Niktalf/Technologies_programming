@@ -6,8 +6,9 @@
 #include "generator.h"
 #include "level.h"
 #include "shell.h"
+#include "sort.h"
 #include "stats.h"
-#include "time_stamp.h"
+#include "timestamp.h"
 
 #define SHELL_LINE_MAX 256
 #define SHELL_WORDS_MAX 8
@@ -20,6 +21,8 @@ static void print_help(void)
     printf("  count                       - how many records and rows\n");
     printf("  head                        - first ten lines\n");
     printf("  tail                        - last ten lines\n");
+    printf("  sort                        - arrange record by time\n");
+    printf("  since <date> <time>         - records start from the moment, for example since 2026-03-15 12:00:00\n");
     printf("  stats                       - records by levels\n");
     printf("  hours                       - distribution by hours\n");
     printf("  modules                     - entries by modules\n");
@@ -71,10 +74,10 @@ static void demo_time()
         { 2027,  1,  1,  0,  0,  0 }
     };
     const size_t count = sizeof SAMPLES / sizeof SAMPLES[0];
-    TimeStamp previous = TIMESTAMP_INVALID;
+    Timestamp previous = TIMESTAMP_INVALID;
 
     for (size_t i = 0; i < count; ++i) {
-        const TimeStamp value = timestamp_pack(SAMPLES[i][0], SAMPLES[i][1], SAMPLES[i][2],
+        const Timestamp value = timestamp_pack(SAMPLES[i][0], SAMPLES[i][1], SAMPLES[i][2],
                                          SAMPLES[i][3], SAMPLES[i][4], SAMPLES[i][5]);
         int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
 
@@ -150,7 +153,7 @@ static void do_load(LogFile *log, char **words, int count)
         printf("Specify the file: load <файл>\n");
         return;
     }
-    LogStatus status = logfile_load(log, words[1]);
+    const LogStatus status = logfile_load(log, words[1]);
     if (status != LOG_OK) {
         printf("Error: %s (%s)\n", logfile_status_text(status), words[1]);
         return;
@@ -158,20 +161,21 @@ static void do_load(LogFile *log, char **words, int count)
     print_load_report(log);
 }
 
-static void do_gen(char **words, const int count)
+static void do_gen(char **words, int count)
 {
-    unsigned long seed = 1;
-    char *end;
-
     if (count < 3) {
         printf("Usage: gen <file> <count of lines> [grain]\n");
         return;
     }
-    const long lines = strtol(words[2], &end, 10);
+
+    char *end;
+    long lines = strtol(words[2], &end, 10);
     if (*end != '\0' || lines <= 0) {
-        printf("The count of lines must be a positive number\n");
+        printf("Число строк должно быть положительным числом\n");
         return;
     }
+
+    unsigned long seed = 1;
     if (count >= 4) {
         seed = strtoul(words[3], &end, 10);
         if (*end != '\0') {
@@ -184,6 +188,47 @@ static void do_gen(char **words, const int count)
         return;
     }
     printf("Create %s: %ld lines, grain %lu\n", words[1], lines, seed);
+}
+
+static void do_sort(LogFile *log)
+{
+    const int depth = sort_by_time(log);
+    printf("Entries sorted: %ld, maximum recursion depth: %d\n", log->count, depth);
+}
+
+static void do_since(LogFile *log, char **words, const int count)
+{
+    if (count < 3) {
+        printf("Usage: since <YYYY-MM-DD> <HH:MM:CC>\n");
+        return;
+    }
+
+    int y, mo, d, h, mi, s;
+    if (sscanf(words[1], "%d-%d-%d", &y, &mo, &d) != 3
+        || sscanf(words[2], "%d:%d:%d", &h, &mi, &s) != 3) {
+        printf("cannot to parse the date and time\n");
+        return;
+    }
+    const Timestamp moment = timestamp_pack(y, mo, d, h, mi, s);
+    if (moment == TIMESTAMP_INVALID) {
+        printf("There is no such moment\n");
+        return;
+    }
+
+    if (!log->sorted) {
+        printf("The log is not sorted, I'm sorting.\n");
+        do_sort(log);
+    }
+
+    const long index = search_not_before(log, moment);
+    if (index == log->count) {
+        printf("ЗThere is no record before this moment.\n");
+        return;
+    }
+    printf("The first suitable entry is the %ld number from %ld:\n", index + 1, log->count);
+    for (long i = index; i < log->count && i < index + LOGFILE_SHOW; ++i) {
+        logfile_print_record(&log->records[i]);
+    }
 }
 
 void shell_run(LogFile *log)
@@ -228,6 +273,14 @@ void shell_run(LogFile *log)
         } else if (strcmp(words[0], "tail") == 0) {
             if (require_log(log)) {
                 logfile_print_tail(log, LOGFILE_SHOW);
+            }
+        } else if (strcmp(words[0], "sort") == 0) {
+            if (require_log(log)) {
+                do_sort(log);
+            }
+        } else if (strcmp(words[0], "since") == 0) {
+            if (require_log(log)) {
+                do_since(log, words, count);
             }
         } else if (strcmp(words[0], "stats") == 0) {
             if (require_log(log)) {

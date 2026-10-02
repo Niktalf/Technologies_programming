@@ -31,7 +31,6 @@ typedef struct {
     int  deleted;
 } Store;
 
-
 typedef struct {
     int count;
     int capacity;
