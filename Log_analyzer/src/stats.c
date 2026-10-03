@@ -23,7 +23,6 @@ static int module_index(Stats *stats, const char *module)
 void stats_collect(const LogFile *log, Stats *stats)
 {
     memset(stats, 0, sizeof *stats);
-
     for (long i = 0; i < log->count; ++i) {
         const LogRecord *r = &log->records[i];
         const int hour = timestamp_hour(r->time);
@@ -32,7 +31,7 @@ void stats_collect(const LogFile *log, Stats *stats)
         if (hour >= 0 && hour < 24) {
             ++stats->by_hour[hour];
         }
-        int m = module_index(stats, r->module);
+        const int m = module_index(stats, r->module);
         if (m >= 0) {
             ++stats->module_counts[m];
         } else {

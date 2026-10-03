@@ -1,7 +1,7 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-#include "log_file.h"
+#include "logfile.h"
 
 void shell_run(LogFile *log);
 

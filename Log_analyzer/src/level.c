@@ -75,6 +75,7 @@ void level_mask_print(const LevelMask mask)
             printed = 1;
         }
     }
+
     if (!printed) {
         printf("empty (no level passes)");
     }

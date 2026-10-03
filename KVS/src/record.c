@@ -50,6 +50,7 @@ uint8_t record_checksum(const uint8_t *data, size_t length)
     if (data == NULL) {
         return 0;
     }
+
     for (size_t i = 0; i < length; ++i) {
         const uint8_t byte = (i == RECORD_HEADER_SIZE - 1) ? 0u : data[i];
         sum = (uint8_t)(sum * 31u + byte);

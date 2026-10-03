@@ -52,7 +52,7 @@ static int find_cell(const Store *store, const char *key)
         const Cell *cell = &store->cells[index];
 
         if (cell->state == CELL_EMPTY) {
-            return -1;   /* цепочку обрывает только пустая ячейка */
+            return -1;
         }
         if (cell->state == CELL_USED && strcmp(cell->key, key) == 0) {
             return index;
@@ -64,8 +64,6 @@ static int find_cell(const Store *store, const char *key)
 
 StoreStatus store_put(Store *store, const char *key, const char *value, int *was_present)
 {
-    int probes;
-    int first_deleted = -1;
 
     if (store == NULL || key == NULL || value == NULL || key[0] == '\0') {
         return STORE_ERR_ARG;
@@ -73,6 +71,9 @@ StoreStatus store_put(Store *store, const char *key, const char *value, int *was
     if (strlen(key) >= STORE_KEY_MAX || strlen(value) >= STORE_VALUE_MAX) {
         return STORE_ERR_TOO_LONG;
     }
+
+    int probes;
+    int first_deleted = -1;
 
     int index = store_home(key);
     for (probes = 0; probes < STORE_CAPACITY; ++probes) {
@@ -150,6 +151,7 @@ StoreStatus store_remove(Store *store, const char *key)
     if (index < 0) {
         return STORE_ERR_NOT_FOUND;
     }
+
     store->cells[index].state = CELL_DELETED;
     --store->count;
     ++store->deleted;
@@ -168,6 +170,7 @@ void store_for_each(const Store *store,
     if (store == NULL || visit == NULL) {
         return;
     }
+
     for (int i = 0; i < STORE_CAPACITY; ++i) {
         if (store->cells[i].state == CELL_USED) {
             visit(store->cells[i].key, store->cells[i].value, context);

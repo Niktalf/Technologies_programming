@@ -7,11 +7,12 @@ add_library(
         log_analyzer_core
         src/generator.c
         src/level.c
-        src/log_file.c
+        src/logfile.c
         src/parse.c
         src/shell.c
         src/stats.c
-        src/time_stamp.c
+        src/timestamp.c
+        src/sort.c
 )
 target_include_directories(log_analyzer_core PUBLIC include)
 

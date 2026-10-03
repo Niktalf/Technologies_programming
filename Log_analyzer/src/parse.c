@@ -3,7 +3,7 @@
 
 #include "parse.h"
 
-static int copy_field(char *destination, size_t size, const char *begin, const char *end)
+static int copy_field(char *destination, const size_t size, const char *begin, const char *end)
 {
     const size_t length = (size_t)(end - begin);
 

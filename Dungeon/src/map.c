@@ -22,9 +22,7 @@ static const char *const LEVEL[MAP_HEIGHT] = {
 
 void map_init()
 {
-    int y;
-
-    for (y = 0; y < MAP_HEIGHT; ++y) {
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
         memcpy(cells[y], LEVEL[y], MAP_WIDTH);
     }
 }

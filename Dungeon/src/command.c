@@ -79,6 +79,9 @@ Command command_read()
     if (strcmp(buffer, "west") == 0 || strcmp(buffer, "w") == 0) {
         return CMD_WEST;
     }
+    if (strcmp(buffer, "reach") == 0) {
+        return CMD_REACH;
+    }
     if (strcmp(buffer, "status") == 0) {
         return CMD_STATUS;
     }
