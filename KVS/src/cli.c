@@ -1,5 +1,7 @@
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 #include "cli.h"
@@ -15,6 +17,9 @@ void cli_print_help(void)
     printf("  get <key>             - get a value\n");
     printf("  del <key>             - delete a pair\n");
     printf("  list                  - list all keys\n");
+    printf("  stats                 - table occupancy and collisions\n");
+    printf("  bench [n]             - compare hash and iteration on n keys\n");
+    printf("  collide               - removing samples from the chain\n");
     printf("  record <key> <value>  - collect a log entry and verify it\n");
     printf("  help                  - this list\n");
     printf("  quit                  - exit\n");
@@ -24,6 +29,7 @@ static void report(const StoreStatus status)
 {
     fprintf(stderr, "Error: %s\n", store_status_text(status));
 }
+
 
 static void demo_record(const char *key, const char *value)
 {
@@ -39,11 +45,12 @@ static void demo_record(const char *key, const char *value)
 
     printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n",
            size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
-    printf("bytes: ");
+    printf("Bytes: ");
     for (size_t i = 0; i < size; ++i) {
         printf("%02X ", (unsigned)buffer[i]);
     }
     printf("\n");
+
     RecordHeader header;
     status = record_parse(buffer, size, &header);
     printf("Parsing: %s\n", record_status_text(status));
@@ -63,6 +70,111 @@ static void demo_record(const char *key, const char *value)
     buffer[2] = (uint8_t)(buffer[2] ^ 0x01u);
 }
 
+static void print_pair(const char *key, const char *value, void *context)
+{
+    (void)context;
+    printf("%s = %s\n", key, value);
+}
+
+static void print_stats(const Store *store)
+{
+    StoreStats stats;
+
+    store_stats(store, &stats);
+    printf("Keys: %d from %d (%d%%)\n",
+           stats.count, stats.capacity, stats.count * 100 / stats.capacity);
+    printf("Cell marked \"deleted\": %d\n", stats.deleted);
+    printf("Keys aren't in their cell: %d\n", stats.displaced);
+    printf("Rather long chain of samples: %d\n", stats.longest_probe);
+}
+
+static Store bench_store;
+
+static double seconds_since(const clock_t start)
+{
+    return (double)(clock() - start) / CLOCKS_PER_SEC;
+}
+
+static void run_bench(long n)
+{
+    long found_hash = 0;
+    long found_linear = 0;
+
+    if (n <= 0 || n > STORE_CAPACITY * 9 / 10) {
+        printf("The number of keys must be from 1 to %d\n", STORE_CAPACITY * 9 / 10);
+        return;
+    }
+    store_init(&bench_store);
+
+    char key[STORE_KEY_MAX];
+    for (long i = 0; i < n; ++i) {
+        snprintf(key, sizeof key, "key%ld", i);
+        store_put(&bench_store, key, "v", NULL);
+    }
+
+    clock_t start = clock();
+    const char *value = NULL;
+    for (long i = 0; i < n; ++i) {
+        snprintf(key, sizeof key, "key%ld", i);
+        if (store_get(&bench_store, key, &value) == STORE_OK) {
+            ++found_hash;
+        }
+    }
+    const double t_hash = seconds_since(start);
+
+    start = clock();
+    for (long i = 0; i < n; ++i) {
+        snprintf(key, sizeof key, "key%ld", i);
+        if (store_get_linear(&bench_store, key, &value) == STORE_OK) {
+            ++found_linear;
+        }
+    }
+    double t_linear = seconds_since(start);
+
+    printf("Keys: %ld\n", n);
+    printf("Via hash: %ld found for %.4f s\n", found_hash, t_hash);
+    printf("Brute force: %ld found for %.4f s\n", found_linear, t_linear);
+    if (t_hash > 0.0) {
+        printf("Hash is faster by %.0f times\n", t_linear / t_hash);
+    }
+    print_stats(&bench_store);
+}
+
+static void demo_collision(void)
+{
+    char first[STORE_KEY_MAX];
+    char second[STORE_KEY_MAX];
+    const char *value = NULL;
+
+    snprintf(first, sizeof first, "a0");
+    const int home = store_home(first);
+    second[0] = '\0';
+    for (long i = 1; i < 1000000; ++i) {
+        snprintf(second, sizeof second, "a%ld", i);
+        if (store_home(second) == home) {
+            break;
+        }
+    }
+    if (store_home(second) != home) {
+        printf("The collision could not be found.\n");
+        return;
+    }
+
+    store_init(&bench_store);
+    store_put(&bench_store, first, "first", NULL);
+    store_put(&bench_store, second, "second", NULL);
+    printf("Keys %s and %s fall into the same cell %d.\n", first, second, home);
+
+    store_remove(&bench_store, first);
+    printf("Deleted %s.\n", first);
+
+    if (store_get(&bench_store, second, &value) == STORE_OK) {
+        printf("Key %s found: %s\n", second, value);
+    } else {
+        printf("The %s key is lost: the deleted cell has terminated the sample chain.\n", second);
+    }
+}
+
 int cli_execute(Store *store, int argc, char **argv)
 {
     if (argc == 0) {
@@ -70,12 +182,12 @@ int cli_execute(Store *store, int argc, char **argv)
     }
 
     if (strcmp(argv[0], "put") == 0) {
+        int was_present = 0;
+
         if (argc < 3) {
             fprintf(stderr, "put requires a key and a value\n");
             return 1;
         }
-
-        int was_present = 0;
         const StoreStatus status = store_put(store, argv[1], argv[2], &was_present);
         if (status != STORE_OK) {
             report(status);
@@ -90,6 +202,7 @@ int cli_execute(Store *store, int argc, char **argv)
             fprintf(stderr, "get requires a key\n");
             return 1;
         }
+
         const char *value = NULL;
         const StoreStatus status = store_get(store, argv[1], &value);
         if (status != STORE_OK) {
@@ -115,19 +228,29 @@ int cli_execute(Store *store, int argc, char **argv)
     }
 
     if (strcmp(argv[0], "list") == 0) {
-        const int total = store_count(store);
-
-        if (total == 0) {
+        if (store_count(store) == 0) {
             printf("The storage is empty.\n");
         }
-        for (int i = 0; i < total; ++i) {
-            const char *key = NULL;
-            const char *value = NULL;
+        store_for_each(store, print_pair, NULL);
+        return 1;
+    }
 
-            if (store_at(store, i, &key, &value) == STORE_OK) {
-                printf("%s = %s\n", key, value);
-            }
+    if (strcmp(argv[0], "stats") == 0) {
+        print_stats(store);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "bench") == 0) {
+        long n = 10000;
+        if (argc >= 2) {
+            n = strtol(argv[1], NULL, 10);
         }
+        run_bench(n);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "collide") == 0) {
+        demo_collision();
         return 1;
     }
 

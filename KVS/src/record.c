@@ -50,7 +50,6 @@ uint8_t record_checksum(const uint8_t *data, size_t length)
     if (data == NULL) {
         return 0;
     }
-
     for (size_t i = 0; i < length; ++i) {
         const uint8_t byte = (i == RECORD_HEADER_SIZE - 1) ? 0u : data[i];
         sum = (uint8_t)(sum * 31u + byte);
@@ -58,14 +57,13 @@ uint8_t record_checksum(const uint8_t *data, size_t length)
     return sum;
 }
 
-RecordStatus record_build(uint8_t *buffer, size_t capacity,
+RecordStatus record_build(uint8_t *buffer, const size_t capacity,
                           const uint8_t flags, const char *key, const char *value,
                           size_t *out_size)
 {
     if (buffer == NULL || key == NULL || value == NULL || out_size == NULL) {
         return RECORD_ERR_ARG;
     }
-
     const size_t key_length = strlen(key);
     const size_t value_length = strlen(value);
 

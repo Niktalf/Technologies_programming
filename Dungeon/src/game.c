@@ -5,9 +5,6 @@
 #include "hero.h"
 #include "map.h"
 
-#define HERO_START_X 2
-#define HERO_START_Y 2
-
 #define TRAP_DAMAGE 7
 #define REST_HEAL   4
 
@@ -15,6 +12,7 @@ static void print_help()
 {
     printf("Available commands:\n");
     printf("  look      - look around\n");
+    printf("  north, south, east, west (or n, s, e, w) - step\n");
     printf("  status    - hero characteristics and states\n");
     printf("  hit       - take damage from a trap\n");
     printf("  rest      - rest and restore health\n");
@@ -23,15 +21,35 @@ static void print_help()
     printf("  quit      - exit the game\n");
 }
 
+static int try_move(Hero *hero, const int dx, const int dy)
+{
+    const int nx = hero->x + dx;
+    const int ny = hero->y + dy;
+
+    if (!map_walkable(nx, ny)) {
+        printf("There's a wall.\n");
+        return 0;
+    }
+    hero->x = nx;
+    hero->y = ny;
+
+    if (map_at(nx, ny) == TILE_STAIRS) {
+        printf("You are standing on the stairs going down. The descent to the next floor will appear later.\n");
+    }
+    return 1;
+}
+
 static void play(void)
 {
     Hero hero;
+    int running = 1;
+
     hero_init(&hero);
+    map_init();
 
     printf("You are going down into the dungeon.\n\n");
-    map_draw(HERO_START_X, HERO_START_Y);
+    map_draw(hero.x, hero.y);
 
-    int running = 1;
     while (running) {
         printf("\n> ");
         fflush(stdout);
@@ -39,7 +57,27 @@ static void play(void)
 
         switch (command) {
         case CMD_LOOK:
-            map_draw(HERO_START_X, HERO_START_Y);
+            map_draw(hero.x, hero.y);
+            break;
+        case CMD_NORTH:
+            if (try_move(&hero, 0, -1)) {
+                map_draw(hero.x, hero.y);
+            }
+            break;
+        case CMD_SOUTH:
+            if (try_move(&hero, 0, 1)) {
+                map_draw(hero.x, hero.y);
+            }
+            break;
+        case CMD_EAST:
+            if (try_move(&hero, 1, 0)) {
+                map_draw(hero.x, hero.y);
+            }
+            break;
+        case CMD_WEST:
+            if (try_move(&hero, -1, 0)) {
+                map_draw(hero.x, hero.y);
+            }
             break;
         case CMD_STATUS:
             hero_print_status(&hero);

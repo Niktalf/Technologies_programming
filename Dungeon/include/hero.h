@@ -11,6 +11,9 @@
 #define HERO_HP_MAX_LIMIT 999
 
 typedef struct {
+    int      x;
+    int      y;
+
     int      hp;
     int      hp_max;
     int      attack;

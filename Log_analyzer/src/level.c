@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "level.h"
 
@@ -65,8 +66,9 @@ int level_mask_has(const LevelMask mask, const Level level)
 
 void level_mask_print(const LevelMask mask)
 {
-    printf("Level filter: ");
     int printed = 0;
+
+    printf("Level filter: ");
     for (int i = 0; i < LEVEL_COUNT; ++i) {
         if (level_mask_has(mask, (Level)i)) {
             printf("%s%s", printed ? ", " : "", LEVEL_NAMES[i]);

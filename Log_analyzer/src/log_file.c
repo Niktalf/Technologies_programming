@@ -2,16 +2,23 @@
 #include <string.h>
 
 #include "log_file.h"
+#include "parse.h"
 
 void logfile_init(LogFile *log)
 {
     if (log == NULL) {
         return;
     }
-    memset(log, 0, sizeof *log);
+    log->count = 0;
+    log->lines = 0;
+    log->broken = 0;
+    log->overflow = 0;
+    log->truncated = 0;
+    log->loaded = 0;
+    log->path[0] = '\0';
 }
 
-const char *logfile_status_text(LogStatus status)
+const char *logfile_status_text(const LogStatus status)
 {
     switch (status) {
     case LOG_OK:       return "success";
@@ -21,16 +28,16 @@ const char *logfile_status_text(LogStatus status)
     }
 }
 
-static void strip_newline(char *line)
+static void strip_line_end(char *line)
 {
-    const size_t length = strlen(line);
+    size_t length = strlen(line);
 
-    if (length > 0 && line[length - 1] == '\n') {
-        line[length - 1] = '\0';
+    while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+        line[--length] = '\0';
     }
 }
 
-LogStatus logfile_scan(LogFile *log, const char *path)
+LogStatus logfile_load(LogFile *log, const char *path)
 {
     char line[LOGFILE_LINE_MAX];
 
@@ -43,21 +50,32 @@ LogStatus logfile_scan(LogFile *log, const char *path)
     }
 
     logfile_init(log);
+    strncpy(log->path, path, sizeof log->path - 1);
+    log->path[sizeof log->path - 1] = '\0';
 
     while (fgets(line, (int)sizeof line, file) != NULL) {
+        LogRecord record;
+
         if (strchr(line, '\n') == NULL && !feof(file)) {
             int c;
             while ((c = fgetc(file)) != EOF && c != '\n') {}
             ++log->truncated;
         }
-        strip_newline(line);
+        strip_line_end(line);
+        ++log->lines;
 
-        if (log->total < LOGFILE_HEAD_SIZE) {
-            strcpy(log->head[log->total], line);
+        if (line[0] == '\0') {
+            continue;
         }
-
-        strcpy(log->tail[log->total % LOGFILE_TAIL_SIZE], line);
-        ++log->total;
+        if (!parse_line(line, &record)) {
+            ++log->broken;
+            continue;
+        }
+        if (log->count >= LOGFILE_CAPACITY) {
+            ++log->overflow;
+            continue;
+        }
+        log->records[log->count++] = record;
     }
 
     fclose(file);
@@ -65,33 +83,27 @@ LogStatus logfile_scan(LogFile *log, const char *path)
     return LOG_OK;
 }
 
+void logfile_print_record(const LogRecord *record)
+{
+    int y, mo, d, h, mi, s;
+
+    timestamp_unpack(record->time, &y, &mo, &d, &h, &mi, &s);
+    printf("%04d-%02d-%02d %02d:%02d:%02d  %-5s  %-8s  %s\n",
+           y, mo, d, h, mi, s, level_name(record->level), record->module, record->text);
+}
+
 void logfile_print_head(const LogFile *log, int count)
 {
-    if (log == NULL || !log->loaded) {
-        printf("The log is not loaded.\n");
-        return;
-    }
-    long limit = count < LOGFILE_HEAD_SIZE ? count : LOGFILE_HEAD_SIZE;
-    if (limit > log->total) {
-        limit = log->total;
-    }
+    const long limit = count < log->count ? count : log->count;
     for (long i = 0; i < limit; ++i) {
-        printf("%ld: %s\n", i + 1, log->head[i]);
+        logfile_print_record(&log->records[i]);
     }
 }
 
-void logfile_print_tail(const LogFile *log, int count)
+void logfile_print_tail(const LogFile *log, const int count)
 {
-    if (log == NULL || !log->loaded) {
-        printf("The log is not loaded.\n");
-        return;
-    }
-    long limit = count < LOGFILE_TAIL_SIZE ? count : LOGFILE_TAIL_SIZE;
-    if (limit > log->total) {
-        limit = log->total;
-    }
-    const long first = log->total - limit;
-    for (long i = first; i < log->total; ++i) {
-        printf("%ld: %s\n", i + 1, log->tail[i % LOGFILE_TAIL_SIZE]);
+    const long first = log->count > count ? log->count - count : 0;
+    for (long i = first; i < log->count; ++i) {
+        logfile_print_record(&log->records[i]);
     }
 }

@@ -67,6 +67,18 @@ Command command_read()
     if (strcmp(buffer, "look") == 0) {
         return CMD_LOOK;
     }
+    if (strcmp(buffer, "north") == 0 || strcmp(buffer, "n") == 0) {
+        return CMD_NORTH;
+    }
+    if (strcmp(buffer, "south") == 0 || strcmp(buffer, "s") == 0) {
+        return CMD_SOUTH;
+    }
+    if (strcmp(buffer, "east") == 0 || strcmp(buffer, "e") == 0) {
+        return CMD_EAST;
+    }
+    if (strcmp(buffer, "west") == 0 || strcmp(buffer, "w") == 0) {
+        return CMD_WEST;
+    }
     if (strcmp(buffer, "status") == 0) {
         return CMD_STATUS;
     }

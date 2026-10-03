@@ -3,6 +3,6 @@
 
 #include "log_file.h"
 
-void shell_run(const LogFile *log);
+void shell_run(LogFile *log);
 
 #endif // SHELL_H

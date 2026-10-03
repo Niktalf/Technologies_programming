@@ -1,26 +1,45 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "map.h"
 
-static const char *const MAP_ROWS[MAP_HEIGHT] = {
-    "####################",
-    "#........#.........#",
-    "#........#.........#",
-    "#........#....>....#",
-    "#....#####.........#",
-    "#....#.............#",
-    "#....#....######...#",
-    "#.........#....#...#",
-    "#.........#....#...#",
-    "####################"
+static char cells[MAP_HEIGHT][MAP_WIDTH];
+
+static const char *const LEVEL[MAP_HEIGHT] = {
+    "########################################",
+    "#.........#..................#.........#",
+    "#.........#..................#.........#",
+    "#.........#.......######.....#....>....#",
+    "#.....#####.......#....#...............#",
+    "#.....#...........#....#.....#.........#",
+    "#.....#....########....#######.........#",
+    "#.........#............................#",
+    "#.........#.....#####..........#########",
+    "#######...#.....#...#..........#.......#",
+    "#.........#.........#..........#.......#",
+    "########################################"
 };
 
-char map_cell(const int x, const int y)
+void map_init()
+{
+    int y;
+
+    for (y = 0; y < MAP_HEIGHT; ++y) {
+        memcpy(cells[y], LEVEL[y], MAP_WIDTH);
+    }
+}
+
+char map_at(const int x, const int y)
 {
     if (x < 0 || y < 0 || x >= MAP_WIDTH || y >= MAP_HEIGHT) {
-        return '#';
+        return TILE_WALL;
     }
-    return MAP_ROWS[y][x];
+    return cells[y][x];
+}
+
+int map_walkable(const int x, const int y)
+{
+    return map_at(x, y) != TILE_WALL;
 }
 
 void map_draw(const int hero_x, const int hero_y)
@@ -30,7 +49,7 @@ void map_draw(const int hero_x, const int hero_y)
             if (x == hero_x && y == hero_y) {
                 putchar('@');
             } else {
-                putchar(map_cell(x, y));
+                putchar(map_at(x, y));
             }
         }
         putchar('\n');

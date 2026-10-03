@@ -7,6 +7,8 @@ void hero_init(Hero *hero)
     if (hero == NULL) {
         return;
     }
+    hero->x = 2;
+    hero->y = 2;
     hero->hp = 20;
     hero->hp_max = 20;
     hero->attack = 5;

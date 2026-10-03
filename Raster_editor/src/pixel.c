@@ -57,8 +57,8 @@ Pixel pixel_invert(const Pixel pixel)
 uint8_t pixel_luminance(const Pixel pixel)
 {
     const int value = (299 * (int)pixel_red(pixel)
-               + 587 * (int)pixel_green(pixel)
-               + 114 * (int)pixel_blue(pixel)) / 1000;
+        + 587 * (int)pixel_green(pixel)
+        + 114 * (int)pixel_blue(pixel)) / 1000;
     return channel_clamp(value);
 }
 
