@@ -37,10 +37,9 @@ typedef struct {
 } LogFile;
 
 void logfile_init(LogFile *log);
-
 LogStatus logfile_load(LogFile *log, const char *path);
-
 const char *logfile_status_text(LogStatus status);
+int logfile_time_range(const LogFile *log, Timestamp *out_first, Timestamp *out_last);
 
 void logfile_print_record(const LogRecord *record);
 void logfile_print_head(const LogFile *log, int count);

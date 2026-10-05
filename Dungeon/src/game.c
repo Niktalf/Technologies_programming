@@ -9,12 +9,14 @@
 #define TRAP_DAMAGE 7
 #define REST_HEAL   4
 
-static void print_help()
-{
+static void print_help() {
     printf("Available commands:\n");
     printf("  look      - watch\n");
     printf("  north, south, east, west (or n, s, e, w) - step\n");
     printf("  status    - characteristics and status of the hero\n");
+    printf("  take      - pick up the gold under your feet\n");
+    printf("  nearest   - nearest free cell\n");
+    printf("  demo      - copy vs address: what is the difference between transfer\n");
     printf("  reach     - is the ladder achievable from here\n");
     printf("  hit       - take damage from a trap\n");
     printf("  rest      - rest and restore health\n");
@@ -23,8 +25,53 @@ static void print_help()
     printf("  quit      - get out of the game\n");
 }
 
-static void print_reach(const Hero *hero)
-{
+static void damage_copy(Hero hero, const int amount) {
+    hero.hp -= amount;
+}
+
+static void damage_pointer(Hero *hero, const int amount) {
+    if (hero == NULL) {
+        return;
+    }
+    hero->hp -= amount;
+}
+
+static void demo_copy_vs_pointer(Hero *hero) {
+    const int before = hero->hp;
+
+    damage_copy(*hero, 5);
+    printf("After the function that received the copy: health  %d (was %d)\n", hero->hp, before);
+
+    damage_pointer(hero, 5);
+    printf("After the function that received the address: health %d (was %d)\n", hero->hp, before);
+
+    hero->hp = before;
+    printf("Size of the hero structure: %u bytes, size of the pointer to it: %u bytes\n",
+           (unsigned)sizeof(Hero), (unsigned)sizeof(Hero *));
+}
+
+static void take_gold(Hero *hero) {
+    if (map_at(hero->x, hero->y) != TILE_GOLD) {
+        printf("There's nothing to pick up here.\n");
+        return;
+    }
+    hero_add_gold(hero, 10);
+    map_set(hero->x, hero->y, TILE_FLOOR);
+    printf("You have picked up 10 gold. Total: %u\n", hero->gold);
+}
+
+static void show_nearest(const Hero *hero) {
+    int x = 0;
+    int y = 0;
+
+    if (map_find_free(hero->x, hero->y, &x, &y)) {
+        printf("Nearest available cell: (%d, %d)\n", x, y);
+    } else {
+        printf("There are no free cells.\n");
+    }
+}
+
+static void print_reach(const Hero *hero) {
     const ReachReport report = reach_check(hero->x, hero->y);
 
     printf("Ladder %s.\n", report.stairs_reachable ? "attainable" : "unattainable");
@@ -32,8 +79,7 @@ static void print_reach(const Hero *hero)
            report.cells, report.max_depth);
 }
 
-static int try_move(Hero *hero, const int dx, const int dy)
-{
+static int try_move(Hero *hero, const int dx, const int dy) {
     const int nx = hero->x + dx;
     const int ny = hero->y + dy;
 
@@ -50,8 +96,7 @@ static int try_move(Hero *hero, const int dx, const int dy)
     return 1;
 }
 
-static int handle(Hero *hero, const Command command)
-{
+static int handle(Hero *hero, const Command command) {
     switch (command) {
         case CMD_LOOK:
             map_draw(hero->x, hero->y);
@@ -75,6 +120,15 @@ static int handle(Hero *hero, const Command command)
             if (try_move(hero, -1, 0)) {
                 map_draw(hero->x, hero->y);
             }
+            return 1;
+        case CMD_TAKE:
+            take_gold(hero);
+            return 1;
+        case CMD_NEAREST:
+            show_nearest(hero);
+            return 1;
+        case CMD_DEMO:
+            demo_copy_vs_pointer(hero);
             return 1;
         case CMD_REACH:
             print_reach(hero);
@@ -115,11 +169,10 @@ static int handle(Hero *hero, const Command command)
             printf("Unknown command: %s\n", command_last_word());
             printf("Type help to see the list of commands.\n");
             return 1;
-        }
+    }
 }
 
-static void play()
-{
+static void play() {
     Hero hero;
     int running = 1;
 
@@ -138,8 +191,7 @@ static void play()
     printf("\nYou made it outside. See you.\n");
 }
 
-void game_run()
-{
+void game_run() {
     int running = 1;
     while (running) {
         printf("=== DUNGEON ===\n");
@@ -150,18 +202,18 @@ void game_run()
 
         const Command command = command_read();
         switch (command) {
-        case CMD_NEW:
-            play();
-            break;
-        case CMD_EMPTY:
-            break;
-        case CMD_QUIT:
-        case CMD_EOF:
-            running = 0;
-            break;
-        default:
-            printf("Unknown menu item: %s\n\n", command_last_word());
-            break;
+            case CMD_NEW:
+                play();
+                break;
+            case CMD_EMPTY:
+                break;
+            case CMD_QUIT:
+            case CMD_EOF:
+                running = 0;
+                break;
+            default:
+                printf("Unknown menu item: %s\n\n", command_last_word());
+                break;
         }
     }
 }

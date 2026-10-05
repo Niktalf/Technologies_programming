@@ -3,8 +3,7 @@
 
 #include "parse.h"
 
-static int copy_field(char *destination, const size_t size, const char *begin, const char *end)
-{
+static int copy_field(char *destination, const size_t size, const char *begin, const char *end) {
     const size_t length = (size_t)(end - begin);
 
     if (length >= size) {
@@ -15,8 +14,7 @@ static int copy_field(char *destination, const size_t size, const char *begin, c
     return 1;
 }
 
-int parse_line(const char *line, LogRecord *out)
-{
+int parse_line(const char *line, LogRecord *out) {
     const char *bar1 = strchr(line, '|');
     if (bar1 == NULL) {
         return 0;

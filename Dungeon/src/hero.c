@@ -2,8 +2,7 @@
 
 #include "hero.h"
 
-void hero_init(Hero *hero)
-{
+void hero_init(Hero *hero) {
     if (hero == NULL) {
         return;
     }
@@ -17,12 +16,17 @@ void hero_init(Hero *hero)
     hero->states = 0;
 }
 
-void hero_take_damage(Hero *hero, const int amount)
-{
+void hero_add_gold(Hero *hero, const unsigned int amount) {
+    if (hero == NULL) {
+        return;
+    }
+    hero->gold += amount;
+}
+
+void hero_take_damage(Hero *hero, const int amount) {
     if (hero == NULL || amount <= 0) {
         return;
     }
-
     int reduced = amount - hero->defense;
     if (reduced < 1) {
         reduced = 1;
@@ -33,8 +37,7 @@ void hero_take_damage(Hero *hero, const int amount)
     }
 }
 
-void hero_heal(Hero *hero, const int amount)
-{
+void hero_heal(Hero *hero, const int amount) {
     if (hero == NULL || amount <= 0) {
         return;
     }
@@ -49,45 +52,39 @@ int hero_is_alive(const Hero *hero)
     return hero != NULL && hero->hp > 0;
 }
 
-void hero_state_set(Hero *hero, const uint8_t state)
-{
+void hero_state_set(Hero *hero, const uint8_t state){
     if (hero != NULL) {
         hero->states |= state;
     }
 }
 
-void hero_state_clear(Hero *hero, const uint8_t state)
-{
+void hero_state_clear(Hero *hero, const uint8_t state) {
     if (hero != NULL) {
         hero->states &= (uint8_t)~state;
     }
 }
 
-int hero_state_has(const Hero *hero, const uint8_t state)
-{
+int hero_state_has(const Hero *hero, const uint8_t state) {
     return hero != NULL && (hero->states & state) != 0;
 }
 
-void hero_state_toggle(Hero *hero, const uint8_t state)
-{
+void hero_state_toggle(Hero *hero, const uint8_t state) {
     if (hero != NULL) {
         hero->states ^= state;
     }
 }
 
-const char *hero_state_name(const uint8_t state)
-{
+const char *hero_state_name(const uint8_t state) {
     switch (state) {
-    case STATE_POISONED:  return "poisoned";
-    case STATE_INVISIBLE: return "invisible";
-    case STATE_IN_FIGHT:  return "in combat";
-    case STATE_BLESSED:   return "blessed";
-    default:              return "unknown state";
+        case STATE_POISONED:  return "poisoned";
+        case STATE_INVISIBLE: return "invisible";
+        case STATE_IN_FIGHT:  return "in combat";
+        case STATE_BLESSED:   return "blessed";
+        default:              return "unknown state";
     }
 }
 
-void hero_print_status(const Hero *hero)
-{
+void hero_print_status(const Hero *hero) {
     static const uint8_t ALL_STATES[] = {
         STATE_POISONED, STATE_INVISIBLE, STATE_IN_FIGHT, STATE_BLESSED
     };

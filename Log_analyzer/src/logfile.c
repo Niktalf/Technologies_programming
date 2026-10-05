@@ -19,8 +19,7 @@ void logfile_init(LogFile *log)
     log->path[0] = '\0';
 }
 
-const char *logfile_status_text(const LogStatus status)
-{
+const char *logfile_status_text(const LogStatus status) {
     switch (status) {
     case LOG_OK:       return "success";
     case LOG_ERR_ARG:  return "invalid argument";
@@ -29,17 +28,14 @@ const char *logfile_status_text(const LogStatus status)
     }
 }
 
-static void strip_line_end(char *line)
-{
+static void strip_line_end(char *line) {
     size_t length = strlen(line);
-
     while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
         line[--length] = '\0';
     }
 }
 
-LogStatus logfile_load(LogFile *log, const char *path)
-{
+LogStatus logfile_load(LogFile *log, const char *path) {
     char line[LOGFILE_LINE_MAX];
 
     if (log == NULL || path == NULL) {
@@ -84,8 +80,28 @@ LogStatus logfile_load(LogFile *log, const char *path)
     return LOG_OK;
 }
 
-void logfile_print_record(const LogRecord *record)
-{
+int logfile_time_range(const LogFile *log, Timestamp *out_first, Timestamp *out_last) {
+    if (log == NULL || out_first == NULL || out_last == NULL || log->count == 0) {
+        return 0;
+    }
+    Timestamp first = log->records[0].time;
+    Timestamp last = first;
+    for (long i = 1; i < log->count; ++i) {
+        const Timestamp t = log->records[i].time;
+
+        if (t < first) {
+            first = t;
+        }
+        if (t > last) {
+            last = t;
+        }
+    }
+    *out_first = first;
+    *out_last = last;
+    return 1;
+}
+
+void logfile_print_record(const LogRecord *record) {
     int y, mo, d, h, mi, s;
 
     timestamp_unpack(record->time, &y, &mo, &d, &h, &mi, &s);
@@ -93,16 +109,14 @@ void logfile_print_record(const LogRecord *record)
            y, mo, d, h, mi, s, level_name(record->level), record->module, record->text);
 }
 
-void logfile_print_head(const LogFile *log, int count)
-{
+void logfile_print_head(const LogFile *log, const int count) {
     const long limit = count < log->count ? count : log->count;
     for (long i = 0; i < limit; ++i) {
         logfile_print_record(&log->records[i]);
     }
 }
 
-void logfile_print_tail(const LogFile *log, const int count)
-{
+void logfile_print_tail(const LogFile *log, const int count){
     const long first = log->count > count ? log->count - count : 0;
     for (long i = first; i < log->count; ++i) {
         logfile_print_record(&log->records[i]);

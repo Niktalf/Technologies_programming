@@ -25,10 +25,9 @@ typedef struct {
 
 void hero_init(Hero *hero);
 
+void hero_add_gold(Hero *hero, unsigned int amount);
 void hero_take_damage(Hero *hero, int amount);
-
 void hero_heal(Hero *hero, int amount);
-
 int hero_is_alive(const Hero *hero);
 
 void hero_state_set(Hero *hero, uint8_t state);
@@ -37,7 +36,6 @@ int  hero_state_has(const Hero *hero, uint8_t state);
 void hero_state_toggle(Hero *hero, uint8_t state);
 
 const char *hero_state_name(uint8_t state);
-
 void hero_print_status(const Hero *hero);
 
 #endif // HERO_H

@@ -6,8 +6,7 @@
 #include "fill.h"
 #include "pixel.h"
 
-static int is_command(const char *word, const char *name)
-{
+static int is_command(const char *word, const char *name) {
     size_t i;
 
     for (i = 0; word[i] != '\0' && name[i] != '\0'; ++i) {
@@ -18,8 +17,7 @@ static int is_command(const char *word, const char *name)
     return word[i] == '\0' && name[i] == '\0';
 }
 
-static int parse_int(const char *word, int *out)
-{
+static int parse_int(const char *word, int *out) {
     char *end = NULL;
     const long value = strtol(word, &end, 10);
 
@@ -30,8 +28,7 @@ static int parse_int(const char *word, int *out)
     return 1;
 }
 
-void commands_print_help()
-{
+void commands_print_help() {
     printf("Available operations:\n");
     printf("  info                      - information about the image\n");
     printf("  gen gradient              - gradient from black to white\n");
@@ -41,13 +38,15 @@ void commands_print_help()
     printf("  bright <number>           - brightness, for example bright 40 or bright -40\n");
     printf("  fill <x> <y> <r> <g> <b>  - fill the area with color\n");
     printf("  save <file>               - save to PPM\n");
+    printf("  minmax                    - the darkest and lightest point\n");
+    printf("  walk                      - inversion by passing the pointer\n");
+    printf("  demo                      - copy vs address: transfer price\n");
     printf("  colors                    - check color operations\n");
     printf("  help                      - this list\n");
     printf("  quit                      - exit\n");
 }
 
-static int require_image(const Editor *editor)
-{
+static int require_image(const Editor *editor) {
     if (!editor->loaded) {
         printf("There is no image. Create it using the command 'gen'.\n");
         return 0;
@@ -55,8 +54,7 @@ static int require_image(const Editor *editor)
     return 1;
 }
 
-static void do_gen(Editor *editor, const Words *words)
-{
+static void do_gen(Editor *editor, const Words *words) {
     int parameter = 0;
 
     if (words->count < 2) {
@@ -82,8 +80,7 @@ static void do_gen(Editor *editor, const Words *words)
     printf("The image has been created.\n");
 }
 
-static void do_bright(Editor *editor, const Words *words)
-{
+static void do_bright(Editor *editor, const Words *words) {
     int delta;
 
     if (!require_image(editor)) {
@@ -97,8 +94,7 @@ static void do_bright(Editor *editor, const Words *words)
     printf("Brightness changed to %d.\n", delta);
 }
 
-static void do_save(Editor *editor, const Words *words)
-{
+static void do_save(Editor *editor, const Words *words) {
     if (!require_image(editor)) {
         return;
     }
@@ -115,8 +111,7 @@ static void do_save(Editor *editor, const Words *words)
     printf("Recorded: %s\n", path);
 }
 
-static void do_fill(Editor *editor, const Words *words)
-{
+static void do_fill(Editor *editor, const Words *words) {
     if (!require_image(editor)) {
         return;
     }
@@ -138,9 +133,7 @@ static void do_fill(Editor *editor, const Words *words)
     }
 
     const FillReport report = fill_region(&editor->image, values[0], values[1],
-                                    pixel_pack(channel_clamp(values[2]),
-                                               channel_clamp(values[3]),
-                                               channel_clamp(values[4])));
+        pixel_pack(channel_clamp(values[2]), channel_clamp(values[3]), channel_clamp(values[4])));
 
     printf("Pixels recolored: %d, maximum recursion depth: %d\n",
            report.filled, report.max_depth);
@@ -153,8 +146,46 @@ static void do_fill(Editor *editor, const Words *words)
     }
 }
 
-int commands_execute(Editor *editor, const Words *words)
+static void invert_copy(Image image) {
+    pixels_invert(image.pixels, image.width * image.height);
+}
+
+static void invert_pointer(Image *image)
 {
+    pixels_invert(image->pixels, image->width * image->height);
+}
+
+static void demo_copy_vs_pointer(Editor *editor) {
+    Pixel before = image_get(&editor->image, 0, 0);
+
+    invert_copy(editor->image);
+    printf("After the function with a copy: pixel 0x%06X (was 0x%06X)\n",
+           (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
+
+    invert_pointer(&editor->image);
+    printf("After the function with the address: pixel 0x%06X (was 0x%06X)\n",
+           (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
+    invert_pointer(&editor->image);
+
+    printf("Image size: %u bytes, pointer size: %u bytes\n",
+           (unsigned)sizeof(Image), (unsigned)sizeof(Image *));
+    printf("A function with a copy gets a quarter of a megabyte and only changes it.\n");
+    printf("It's not always possible to measure the price of this copy: after seeing\n");
+    printf("that no one needs a copy, the compiler has the right not to make it.\n");
+}
+
+static void do_minmax(const Editor *editor) {
+    int low = 0;
+    int high = 0;
+
+    if (image_min_max(&editor->image, &low, &high)) {
+        printf("Darkest point: %d, lightest: %d\n", low, high);
+    } else {
+        printf("The image is empty.\n");
+    }
+}
+
+int commands_execute(Editor *editor, const Words *words) {
     if (words->count == 0) {
         return 1;
     }
@@ -175,6 +206,21 @@ int commands_execute(Editor *editor, const Words *words)
         do_fill(editor, words);
     } else if (is_command(name, "save")) {
         do_save(editor, words);
+    } else if (is_command(name, "minmax")) {
+        if (require_image(editor)) {
+            do_minmax(editor);
+        }
+    } else if (is_command(name, "walk")) {
+        if (require_image(editor)) {
+            int total = editor->image.width * editor->image.height;
+
+            pixels_invert_walk(editor->image.pixels, editor->image.pixels + total);
+            printf("Inverted by a pointer pass.\n");
+        }
+    } else if (is_command(name, "demo")) {
+        if (require_image(editor)) {
+            demo_copy_vs_pointer(editor);
+        }
     } else if (is_command(name, "colors")) {
         commands_demo_colors();
     } else if (is_command(name, "help")) {
@@ -188,8 +234,7 @@ int commands_execute(Editor *editor, const Words *words)
     return 1;
 }
 
-void commands_demo_colors()
-{
+void commands_demo_colors() {
     static const Pixel SAMPLES[] = {
         0x000000u,
         0xFFFFFFu,
@@ -218,6 +263,5 @@ void commands_demo_colors()
 
     const Pixel p = pixel_pack(17, 200, 255);
     printf("\nPackaging reversibility: %u %u %u -> 0x%06X -> %u %u %u\n",
-        17u, 200u, 255u, (unsigned)p,
-        (unsigned)pixel_red(p), (unsigned)pixel_green(p), (unsigned)pixel_blue(p));
+        17u, 200u, 255u, (unsigned)p, (unsigned)pixel_red(p), (unsigned)pixel_green(p), (unsigned)pixel_blue(p));
 }

@@ -5,8 +5,7 @@ static Pixel      old_color;
 static Pixel      new_color;
 static FillReport current;
 
-static void fill_step(const int x, const int y, const int depth)
-{
+static void fill_step(const int x, const int y, const int depth) {
     if (!image_inside(target_image, x, y)) {
         return;
     }
@@ -30,8 +29,7 @@ static void fill_step(const int x, const int y, const int depth)
     fill_step(x, y - 1, depth + 1);
 }
 
-FillReport fill_region(Image *image, const int x, const int y, const Pixel color)
-{
+FillReport fill_region(Image *image, const int x, const int y, const Pixel color) {
     current.filled = 0;
     current.max_depth = 0;
     current.truncated = 0;

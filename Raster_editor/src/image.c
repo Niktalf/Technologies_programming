@@ -2,8 +2,7 @@
 
 #include "image.h"
 
-void image_init(Image *image)
-{
+void image_init(Image *image) {
     image->width = IMAGE_WIDTH;
     image->height = IMAGE_HEIGHT;
     for (int i = 0; i < IMAGE_WIDTH * IMAGE_HEIGHT; ++i) {
@@ -11,33 +10,28 @@ void image_init(Image *image)
     }
 }
 
-int image_offset(const Image *image, const int x, const int y)
-{
+int image_offset(const Image *image, const int x, const int y) {
     return y * image->width + x;
 }
 
-int image_inside(const Image *image, const int x, const int y)
-{
+int image_inside(const Image *image, const int x, const int y) {
     return x >= 0 && y >= 0 && x < image->width && y < image->height;
 }
 
-Pixel image_get(const Image *image, const int x, const int y)
-{
+Pixel image_get(const Image *image, const int x, const int y) {
     if (!image_inside(image, x, y)) {
         return pixel_pack(0, 0, 0);
     }
     return image->pixels[image_offset(image, x, y)];
 }
 
-void image_set(Image *image, const int x, const int y, const Pixel color)
-{
+void image_set(Image *image, const int x, const int y, const Pixel color) {
     if (image_inside(image, x, y)) {
         image->pixels[image_offset(image, x, y)] = color;
     }
 }
 
-void image_gradient(Image *image)
-{
+void image_gradient(Image *image) {
     for (int y = 0; y < image->height; ++y) {
         for (int x = 0; x < image->width; ++x) {
             const int v = x * CHANNEL_MAX / (image->width - 1);
@@ -46,8 +40,7 @@ void image_gradient(Image *image)
     }
 }
 
-void image_checker(Image *image, int cell)
-{
+void image_checker(Image *image, int cell) {
     if (cell < 1) {
         cell = 1;
     }
@@ -60,8 +53,7 @@ void image_checker(Image *image, int cell)
     }
 }
 
-void image_stripes(Image *image, int count)
-{
+void image_stripes(Image *image, int count) {
     static const uint8_t PALETTE[][3] = {
         { 220,  40,  40 }, { 240, 160,  30 }, { 240, 230,  50 },
         {  60, 190,  70 }, {  40, 170, 220 }, {  60,  70, 200 },
@@ -82,22 +74,65 @@ void image_stripes(Image *image, int count)
     }
 }
 
-void image_invert(Image *image)
-{
-    const int total = image->width * image->height;
-
-    for (int i = 0; i < total; ++i) {
-        image->pixels[i] = pixel_invert(image->pixels[i]);
+void pixels_invert(Pixel *data, const int count) {
+    if (data == NULL) {
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        data[i] = pixel_invert(data[i]);
     }
 }
 
-void image_brightness(Image *image, const int delta)
-{
-    const int total = image->width * image->height;
-
-    for (int i = 0; i < total; ++i) {
-        image->pixels[i] = pixel_adjust_brightness(image->pixels[i], delta);
+void pixels_brightness(Pixel *data, const int count, const int delta) {
+    if (data == NULL) {
+        return;
     }
+    for (int i = 0; i < count; ++i) {
+        data[i] = pixel_adjust_brightness(data[i], delta);
+    }
+}
+
+void pixels_invert_walk(Pixel *begin, const Pixel *end) {
+    if (begin == NULL || end == NULL) {
+        return;
+    }
+    for (Pixel *p = begin; p != end; ++p) {
+        *p = pixel_invert(*p);
+    }
+}
+
+void image_invert(Image *image) {
+    pixels_invert(image->pixels, image->width * image->height);
+}
+
+void image_brightness(Image *image, const int delta) {
+    pixels_brightness(image->pixels, image->width * image->height, delta);
+}
+
+int image_min_max(const Image *image, int *out_min, int *out_max) {
+    if (image == NULL || out_min == NULL || out_max == NULL) {
+        return 0;
+    }
+    const int total = image->width * image->height;
+    if (total <= 0) {
+        return 0;
+    }
+
+    int low = pixel_luminance(image->pixels[0]);
+    int high = low;
+    for (int i = 1; i < total; ++i) {
+        const int value = pixel_luminance(image->pixels[i]);
+
+        if (value < low) {
+            low = value;
+        }
+        if (value > high) {
+            high = value;
+        }
+    }
+    *out_min = low;
+    *out_max = high;
+    return 1;
 }
 
 int image_save_ppm(const Image *image, const char *path)

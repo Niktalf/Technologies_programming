@@ -1,6 +1,5 @@
 #include <ctype.h>
 #include <stdio.h>
-#include <string.h>
 
 #include "level.h"
 
@@ -8,8 +7,7 @@ static const char *const LEVEL_NAMES[LEVEL_COUNT] = {
     "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
 };
 
-Level level_from_word(const char *word)
-{
+Level level_from_word(const char *word) {
     if (word == NULL || word[0] == '\0') {
         return LEVEL_UNKNOWN;
     }
@@ -32,40 +30,35 @@ Level level_from_word(const char *word)
     return LEVEL_UNKNOWN;
 }
 
-const char *level_name(const Level level)
-{
+const char *level_name(const Level level) {
     if (level < 0 || level >= LEVEL_COUNT) {
         return "UNKNOWN";
     }
     return LEVEL_NAMES[level];
 }
 
-LevelMask level_mask_set(const LevelMask mask, const Level level)
-{
+LevelMask level_mask_set(const LevelMask mask, const Level level) {
     if (level < 0 || level >= LEVEL_COUNT) {
         return mask;
     }
     return (LevelMask)(mask | LEVEL_BIT(level));
 }
 
-LevelMask level_mask_clear(const LevelMask mask, const Level level)
-{
+LevelMask level_mask_clear(const LevelMask mask, const Level level) {
     if (level < 0 || level >= LEVEL_COUNT) {
         return mask;
     }
     return (LevelMask)(mask & (LevelMask)~LEVEL_BIT(level));
 }
 
-int level_mask_has(const LevelMask mask, const Level level)
-{
+int level_mask_has(const LevelMask mask, const Level level) {
     if (level < 0 || level >= LEVEL_COUNT) {
         return 0;
     }
     return (mask & LEVEL_BIT(level)) != 0;
 }
 
-void level_mask_print(const LevelMask mask)
-{
+void level_mask_print(const LevelMask mask) {
     int printed = 0;
 
     printf("Level filter: ");

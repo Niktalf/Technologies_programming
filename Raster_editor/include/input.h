@@ -11,7 +11,6 @@ typedef struct {
 } Words;
 
 int input_read_words(Words *words);
-
 void input_from_args(Words *words, int argc, char **argv);
 
 #endif // INPUT_H

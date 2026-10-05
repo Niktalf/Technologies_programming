@@ -16,8 +16,7 @@ static const char *const MESSAGES[] = {
     "cache cleared"
 };
 
-static Level random_level()
-{
+static Level random_level() {
     const int r = rand() % 100;
 
     if (r < 30) return LEVEL_DEBUG;
@@ -27,8 +26,7 @@ static Level random_level()
     return LEVEL_FATAL;
 }
 
-int generator_write(const char *path, const long count, const unsigned int seed)
-{
+int generator_write(const char *path, const long count, const unsigned int seed) {
     FILE *file = fopen(path, "w");
     const int module_count = (int)(sizeof MODULES / sizeof MODULES[0]);
     const int message_count = (int)(sizeof MESSAGES / sizeof MESSAGES[0]);

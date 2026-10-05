@@ -23,9 +23,14 @@ void image_gradient(Image *image);
 void image_checker(Image *image, int cell);
 void image_stripes(Image *image, int count);
 
+void pixels_invert(Pixel *data, int count);
+void pixels_brightness(Pixel *data, int count, int delta);
+void pixels_invert_walk(Pixel *begin, const Pixel *end);
+
 void image_invert(Image *image);
 void image_brightness(Image *image, int delta);
 
+int image_min_max(const Image *image, int *out_min, int *out_max);
 int image_save_ppm(const Image *image, const char *path);
 
 #endif // IMAGE_H
