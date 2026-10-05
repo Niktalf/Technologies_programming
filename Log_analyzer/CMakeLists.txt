@@ -12,6 +12,7 @@ add_library(
         src/shell.c
         src/sort.c
         src/stats.c
+        src/text.c
         src/timestamp.c
         src/view.c
 )

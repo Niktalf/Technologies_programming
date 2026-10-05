@@ -1,111 +1,68 @@
 #include <ctype.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "command.h"
 
-#define COMMAND_BUFFER_SIZE 64
-
-static char last_word[COMMAND_BUFFER_SIZE];
-
 static void discard_rest_of_line(const char *buffer) {
-    int c;
-
     if (strchr(buffer, '\n') != NULL) {
         return;
     }
-    while ((c = getchar()) != EOF && c != '\n') {}
-}
-
-static void trim(char *buffer) {
-    size_t length = strlen(buffer);
-    size_t start = 0;
-
-    while (length > 0 && isspace((unsigned char)buffer[length - 1])) {
-        buffer[--length] = '\0';
-    }
-    while (buffer[start] != '\0' && isspace((unsigned char)buffer[start])) {
-        ++start;
-    }
-    if (start > 0) {
-        memmove(buffer, buffer + start, strlen(buffer + start) + 1);
+    int c = getchar();
+    while (c != EOF && c != '\n') {
+        c = getchar();
     }
 }
 
-static void to_lower(char *buffer) {
-    for (size_t i = 0; buffer[i] != '\0'; ++i) {
-        buffer[i] = (char)tolower((unsigned char)buffer[i]);
+static void split_words(Command *command) {
+    command->count = 0;
+    char *p = command->line;
+    while (*p != '\0' && command->count < COMMAND_WORDS_MAX) {
+        while (*p != '\0' && isspace((unsigned char)*p)) {
+            *p = '\0';
+            ++p;
+        }
+        if (*p == '\0') {
+            break;
+        }
+
+        command->word[command->count] = p;
+        ++command->count;
+
+        while (*p != '\0' && !isspace((unsigned char)*p)) {
+            ++p;
+        }
     }
 }
 
-Command command_read() {
-    char buffer[COMMAND_BUFFER_SIZE];
+void command_read(Command *command) {
+    command->count = 0;
+    command->eof = 0;
+    if (fgets(command->line, COMMAND_LINE_MAX, stdin) == NULL) {
+        command->eof = 1;
+        return;
+    }
+    discard_rest_of_line(command->line);
+    split_words(command);
 
-    if (fgets(buffer, sizeof buffer, stdin) == NULL) {
-        last_word[0] = '\0';
-        return CMD_EOF;
+    if (command->count > 0) {
+        for (int i = 0; command->word[0][i] != '\0'; ++i) {
+            command->word[0][i] = (char)tolower((unsigned char)command->word[0][i]);
+        }
     }
-    discard_rest_of_line(buffer);
-    trim(buffer);
-    to_lower(buffer);
-
-    strncpy(last_word, buffer, sizeof last_word - 1);
-    last_word[sizeof last_word - 1] = '\0';
-
-    if (buffer[0] == '\0') {
-        return CMD_EMPTY;
-    }
-    if (strcmp(buffer, "new") == 0) {
-        return CMD_NEW;
-    }
-    if (strcmp(buffer, "look") == 0) {
-        return CMD_LOOK;
-    }
-    if (strcmp(buffer, "north") == 0 || strcmp(buffer, "n") == 0) {
-        return CMD_NORTH;
-    }
-    if (strcmp(buffer, "south") == 0 || strcmp(buffer, "s") == 0) {
-        return CMD_SOUTH;
-    }
-    if (strcmp(buffer, "east") == 0 || strcmp(buffer, "e") == 0) {
-        return CMD_EAST;
-    }
-    if (strcmp(buffer, "west") == 0 || strcmp(buffer, "w") == 0) {
-        return CMD_WEST;
-    }
-    if (strcmp(buffer, "take") == 0) {
-        return CMD_TAKE;
-    }
-    if (strcmp(buffer, "nearest") == 0) {
-        return CMD_NEAREST;
-    }
-    if (strcmp(buffer, "demo") == 0) {
-        return CMD_DEMO;
-    }
-    if (strcmp(buffer, "reach") == 0) {
-        return CMD_REACH;
-    }
-    if (strcmp(buffer, "status") == 0) {
-        return CMD_STATUS;
-    }
-    if (strcmp(buffer, "hit") == 0) {
-        return CMD_HIT;
-    }
-    if (strcmp(buffer, "rest") == 0) {
-        return CMD_REST;
-    }
-    if (strcmp(buffer, "poison") == 0) {
-        return CMD_POISON;
-    }
-    if (strcmp(buffer, "help") == 0) {
-        return CMD_HELP;
-    }
-    if (strcmp(buffer, "quit") == 0) {
-        return CMD_QUIT;
-    }
-    return CMD_UNKNOWN;
 }
 
-const char *command_last_word() {
-    return last_word;
+const char *command_name(const Command *command) {
+    if (command->count == 0) {
+        return "";
+    }
+    return command->word[0];
+}
+
+const char *command_argument(const Command *command, const int index) {
+    if (index < 1 || index >= command->count) {
+        return NULL;
+    }
+    return command->word[index];
 }

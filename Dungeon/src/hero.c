@@ -89,7 +89,6 @@ void hero_print_status(const Hero *hero) {
         STATE_POISONED, STATE_INVISIBLE, STATE_IN_FIGHT, STATE_BLESSED
     };
     const size_t state_count = sizeof ALL_STATES / sizeof ALL_STATES[0];
-    size_t i;
     int printed = 0;
 
     if (hero == NULL) {
@@ -100,7 +99,7 @@ void hero_print_status(const Hero *hero) {
     printf("Gold: %u\n", hero->gold);
     printf("Statuses: ");
 
-    for (i = 0; i < state_count; ++i) {
+    for (size_t i = 0; i < state_count; ++i) {
         if (hero_state_has(hero, ALL_STATES[i])) {
             printf("%s%s", printed ? ", " : "", hero_state_name(ALL_STATES[i]));
             printed = 1;

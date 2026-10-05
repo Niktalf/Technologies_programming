@@ -5,7 +5,9 @@
 #include <string.h>
 
 #include "cli.h"
+#include "parser.h"
 #include "range.h"
+#include "script.h"
 #include "record.h"
 
 #define CLI_LINE_MAX  256
@@ -14,11 +16,14 @@
 void cli_print_help() {
     printf("Available commands:\n");
     printf("  put <key> <value>     - save a pair\n");
+    printf("      the value with spaces is put in quotation marks: put name \"two words\"\n");
+    printf("      the quotation mark inside the value is written as \\\"\n");
     printf("  get <key>             - get a value\n");
     printf("  del <key>             - delete a pair\n");
     printf("  list                  - list all keys\n");
     printf("  sorted                - all pairs in ascending order of the key\n");
     printf("  range <from> <to>     - pairs with keys in the range, boundaries are included\n");
+    printf("  script <file> [stop]  - execute commands from file\n");
     printf("  use <1|2>             - switch to another storage\n");
     printf("  which                 - which storage is selected\n");
     printf("  copy <key>            - copy the pair to another storage\n");
@@ -39,15 +44,13 @@ static void demo_record(const char *key, const char *value) {
     uint8_t buffer[512];
     size_t size = 0;
 
-    RecordStatus status = record_build(buffer, sizeof buffer,
-                                       record_flags_set(0, RECORD_FLAG_PUT), key, value, &size);
+    RecordStatus status = record_build(buffer, sizeof buffer, record_flags_set(0, RECORD_FLAG_PUT), key, value, &size);
     if (status != RECORD_OK) {
         fprintf(stderr, "Build error: %s\n", record_status_text(status));
         return;
     }
 
-    printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n",
-           size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
+    printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n", size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
     printf("Bytes: ");
     for (size_t i = 0; i < size; ++i) {
         printf("%02X ", (unsigned)buffer[i]);
@@ -138,8 +141,7 @@ static void run_bench(const long n) {
     print_stats(&bench_store);
 }
 
-static void demo_collision()
-{
+static void demo_collision() {
     char first[STORE_KEY_MAX];
     char second[STORE_KEY_MAX];
 
@@ -253,7 +255,21 @@ int cli_execute(Session *session, const int argc, char **argv) {
 
         int depth = 0;
         const int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
-        printf("Found is: %d, sorting recursion depth: %d\n", found, depth);
+        printf("Pairs found: %d, sorting recursion depth: %d\n", found, depth);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "script") == 0) {
+        int stop = 0;
+
+        if (argc < 2) {
+            fprintf(stderr, "script requires file name\n");
+            return 1;
+        }
+        if (argc >= 3 && strcmp(argv[2], "stop") == 0) {
+            stop = 1;
+        }
+        script_run(session, argv[1], stop);
         return 1;
     }
 
@@ -272,8 +288,7 @@ int cli_execute(Session *session, const int argc, char **argv) {
     }
 
     if (strcmp(argv[0], "which") == 0) {
-        printf("Current storage: %d, keys in it: %d\n",
-               session->current + 1, store_count(session_current(session)));
+        printf("Current storage: %d, keys in it: %d\n", session->current + 1, store_count(session_current(session)));
         printf("In another keystore: %d\n", store_count(session_other(session)));
         return 1;
     }
@@ -283,7 +298,6 @@ int cli_execute(Session *session, const int argc, char **argv) {
             fprintf(stderr, "copy requires a key\n");
             return 1;
         }
-
 
         const char *value = NULL;
         if (store_get(store, argv[1], &value) != STORE_OK) {
@@ -348,25 +362,6 @@ int cli_execute(Session *session, const int argc, char **argv) {
     return 1;
 }
 
-static int split_words(char *line, char **argv, const int max_args) {
-    int argc = 0;
-    char *p = line;
-
-    while (*p != '\0' && argc < max_args) {
-        while (*p != '\0' && isspace((unsigned char)*p)) {
-            *p++ = '\0';
-        }
-        if (*p == '\0') {
-            break;
-        }
-        argv[argc++] = p;
-        while (*p != '\0' && !isspace((unsigned char)*p)) {
-            ++p;
-        }
-    }
-    return argc;
-}
-
 void cli_run_interactive(Session *session) {
     char line[CLI_LINE_MAX];
     char *argv[CLI_ARGS_MAX];
@@ -385,7 +380,13 @@ void cli_run_interactive(Session *session) {
             int c;
             while ((c = getchar()) != EOF && c != '\n') {}
         }
-        const int argc = split_words(line, argv, CLI_ARGS_MAX);
+
+        int argc = 0;
+        const ParserStatus status = parser_split(line, argv, CLI_ARGS_MAX, &argc);
+        if (status != PARSER_OK) {
+            printf("Not parsing the string: %s\n", parser_status_text(status));
+            continue;
+        }
         if (argc == 0) {
             continue;
         }

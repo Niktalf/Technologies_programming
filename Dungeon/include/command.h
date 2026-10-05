@@ -1,30 +1,19 @@
 #ifndef COMMAND_H
 #define COMMAND_H
 
-typedef enum {
-    CMD_UNKNOWN = 0,
-    CMD_NEW,
-    CMD_LOOK,
-    CMD_NORTH,
-    CMD_SOUTH,
-    CMD_EAST,
-    CMD_WEST,
-    CMD_STATUS,
-    CMD_REACH,
-    CMD_TAKE,
-    CMD_NEAREST,
-    CMD_DEMO,
-    CMD_HIT,
-    CMD_REST,
-    CMD_POISON,
-    CMD_HELP,
-    CMD_QUIT,
-    CMD_EMPTY,
-    CMD_EOF
+#define COMMAND_LINE_MAX  128
+#define COMMAND_WORDS_MAX 8
+#define COMMAND_WORD_MAX  32
+
+typedef struct {
+    char  line[COMMAND_LINE_MAX];
+    char *word[COMMAND_WORDS_MAX];
+    int   count;
+    int   eof;
 } Command;
 
-Command command_read();
-
-const char *command_last_word();
+void command_read(Command *command);
+const char *command_name(const Command *command);
+const char *command_argument(const Command *command, int index);
 
 #endif // COMMAND_H

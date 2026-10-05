@@ -9,6 +9,7 @@
 #include "shell.h"
 #include "sort.h"
 #include "stats.h"
+#include "text.h"
 #include "view.h"
 #include "timestamp.h"
 
@@ -18,26 +19,29 @@
 static void print_help(void)
 {
     printf("Available commands:\n");
-    printf("  load <load>                 - load the log\n");
-    printf("  gen <file> <number> [grain] - create a test log\n");
-    printf("  count                       - how many records and rows\n");
-    printf("  head                        - first ten lines\n");
-    printf("  tail                        - last ten lines\n");
-    printf("  order time|level|module     - viewing order (recordings don't move)\n");
-    printf("  view [n]                    - show n records in the selected order\n");
-    printf("  span                        - the earliest and latest time\n");
-    printf("  cost                        - compare the sorting of pointers and records\n");
-    printf("  sort                        - arrange record by time\n");
-    printf("  since <date> <time>         - records start from the moment, for example since 2026-03-15 12:00:00\n");
-    printf("  stats                       - records by levels\n");
-    printf("  hours                       - distribution by hours\n");
-    printf("  modules                     - entries by modules\n");
-    printf("  level <levels...>           - set the filter, for example: level error fatal\n");
-    printf("  level all | none            - enable all levels or disable all\n");
-    printf("  filter                      - show the current filter\n");
-    printf("  time                        - check time packaging\n");
-    printf("  help                        - this list\n");
-    printf("  quit                        - exit\n");
+    printf("  load <file>                           - load the log\n");
+    printf("  gen <file> <number> [grain]           - create a test log\n");
+    printf("  count                                 - how many records and rows\n");
+    printf("  head                                  - first ten lines\n");
+    printf("  tail                                  - last ten lines\n");
+    printf("  order time|level|module               - viewing order (recordings don't move)\n");
+    printf("  view [n]                              - show n records in the selected order\n");
+    printf("  span                                  - the earliest and latest time\n");
+    printf("  cost                                  - compare the sorting of pointers and records\n");
+    printf("  sort                                  - arrange record by time\n");
+    printf("  since <date> <time>                   - records start from the moment, for example since 2026-03-15 12:00:00\n");
+    printf("  stats                                 - records by levels\n");
+    printf("  hours                                 - distribution by hours\n");
+    printf("  modules                               - entries by modules\n");
+    printf("  grep <word>                           - entries with this word\n in the text\n");
+    printf("  module <title>                        - entries of one module\n");
+    printf("  between <date> <time> <date> <time>   - entries for the period\n");
+    printf("  level <levels...>                     - set the filter, for example: level error fatal\n");
+    printf("  level all | none                      - enable all levels or disable all\n");
+    printf("  filter                                - show the current filter\n");
+    printf("  time                                  - check time packaging\n");
+    printf("  help                                  - this list\n");
+    printf("  quit                                  - exit\n");
 }
 
 static int read_words(char *buffer, const size_t size, char **words, const int max_words) {
@@ -183,10 +187,10 @@ static void do_gen(char **words, const int count) {
         }
     }
     if (!generator_write(words[1], lines, (unsigned int)seed)) {
-        printf("Не удалось создать файл: %s\n", words[1]);
+        printf("Failed to create file: %s\n", words[1]);
         return;
     }
-    printf("Создан %s: %ld строк, зерно %lu\n", words[1], lines, seed);
+    printf("Created %s: %ld lines, grain %lu\n", words[1], lines, seed);
 }
 
 static void do_order(const LogFile *log, char **words, const int count) {
@@ -224,9 +228,9 @@ static void do_span(const LogFile *log)
         printf("There are no records.\n");
         return;
     }
-    printf("earliest:  ");
+    printf("Earliest:  ");
     print_time(first);
-    printf("\nlatest: ");
+    printf("\nLatest: ");
     print_time(last);
     printf("\n");
 }
@@ -252,6 +256,110 @@ static void do_cost(const LogFile *log) {
     printf("Sorting the records themselves: %.4f с\n", by_records);
 }
 
+static int passes_filter(const LogRecord *record, const LevelMask mask) {
+    return level_mask_has(mask, record->level);
+}
+
+static void print_found(const long shown, const long found) {
+    if (found == 0) {
+        printf("Nothing found.\n");
+    } else if (found > shown) {
+        printf("Records found: %ld, the first %ld are shown.\n", found, shown);
+    } else {
+        printf("Records found: %ld.\n", found);
+    }
+}
+
+static void do_grep(const LogFile *log, char **words, const int count, const LevelMask mask) {
+    long found = 0;
+    long shown = 0;
+
+    if (count < 2) {
+        printf("What to look for? For example: grep timeout\n");
+        return;
+    }
+    for (long i = 0; i < log->count; ++i) {
+        const LogRecord *r = &log->records[i];
+
+        if (!passes_filter(r, mask)) {
+            continue;
+        }
+        if (text_find_ignore_case(r->text, words[1]) < 0) {
+            continue;
+        }
+        ++found;
+        if (shown < LOGFILE_SHOW) {
+            logfile_print_record(r);
+            ++shown;
+        }
+    }
+    print_found(shown, found);
+}
+
+static void do_module(const LogFile *log, char **words, const int count, const LevelMask mask) {
+    long found = 0;
+    long shown = 0;
+    long i;
+
+    if (count < 2) {
+        printf("Which module? For example: module net\n");
+        return;
+    }
+    for (i = 0; i < log->count; ++i) {
+        const LogRecord *r = &log->records[i];
+
+        if (!passes_filter(r, mask) || !text_same_word(r->module, words[1])) {
+            continue;
+        }
+        ++found;
+        if (shown < LOGFILE_SHOW) {
+            logfile_print_record(r);
+            ++shown;
+        }
+    }
+    print_found(shown, found);
+}
+
+static void do_between(const LogFile *log, char **words, const int count, const LevelMask mask) {
+    if (count < 5) {
+        printf("Usage: between <YYYY-MM-DD> <HH:MM:SS> <YYYY-MM-DD> <HH:MM:SS>\n");
+        return;
+    }
+    int y1, mo1, d1, h1, mi1, s1;
+    int y2, mo2, d2, h2, mi2, s2;
+    if (sscanf(words[1], "%d-%d-%d", &y1, &mo1, &d1) != 3
+        || sscanf(words[2], "%d:%d:%d", &h1, &mi1, &s1) != 3
+        || sscanf(words[3], "%d-%d-%d", &y2, &mo2, &d2) != 3
+        || sscanf(words[4], "%d:%d:%d", &h2, &mi2, &s2) != 3) {
+        printf("Couldn't make out the date and time\n");
+        return;
+    }
+    const Timestamp from = timestamp_pack(y1, mo1, d1, h1, mi1, s1);
+    const Timestamp to = timestamp_pack(y2, mo2, d2, h2, mi2, s2);
+    if (from == TIMESTAMP_INVALID || to == TIMESTAMP_INVALID) {
+        printf("There is no such moment\n");
+        return;
+    }
+    if (from > to) {
+        printf("The beginning of the gap is later than its end: there are no entries.\n");
+        return;
+    }
+    long found = 0, shown = 0;
+    for (long i = 0; i < log->count; ++i) {
+        const LogRecord *r = &log->records[i];
+
+        if (!passes_filter(r, mask) || r->time < from || r->time > to) {
+            continue;
+        }
+        ++found;
+        if (shown < LOGFILE_SHOW) {
+            logfile_print_record(r);
+            ++shown;
+        }
+    }
+    print_found(shown, found);
+}
+
 static void do_sort(LogFile *log) {
     const int depth = sort_by_time(log);
     printf("Entries sorted: %ld, maximum recursion depth: %d\n", log->count, depth);
@@ -259,7 +367,7 @@ static void do_sort(LogFile *log) {
 
 static void do_since(LogFile *log, char **words, const int count) {
     if (count < 3) {
-        printf("Usage: since <YYYY-MM-DD> <HH:MM:CC>\n");
+        printf("Usage: since <YYYY-MM-DD> <HH:MM:SS>\n");
         return;
     }
 
@@ -332,6 +440,18 @@ void shell_run(LogFile *log) {
         } else if (strcmp(words[0], "tail") == 0) {
             if (require_log(log)) {
                 logfile_print_tail(log, LOGFILE_SHOW);
+            }
+        } else if (strcmp(words[0], "grep") == 0) {
+            if (require_log(log)) {
+                do_grep(log, words, count, mask);
+            }
+        } else if (strcmp(words[0], "module") == 0) {
+            if (require_log(log)) {
+                do_module(log, words, count, mask);
+            }
+        } else if (strcmp(words[0], "between") == 0) {
+            if (require_log(log)) {
+                do_between(log, words, count, mask);
             }
         } else if (strcmp(words[0], "order") == 0) {
             if (require_log(log)) {
