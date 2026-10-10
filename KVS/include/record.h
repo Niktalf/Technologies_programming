@@ -1,6 +1,7 @@
 #ifndef RECORD_H
 #define RECORD_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define RECORD_HEADER_SIZE 8
@@ -31,9 +32,7 @@ void record_pack_header(uint8_t *buffer, const RecordHeader *header);
 void record_unpack_header(const uint8_t *buffer, RecordHeader *header);
 
 uint8_t record_checksum(const uint8_t *data, size_t length);
-RecordStatus record_build(uint8_t *buffer, size_t capacity,
-                          uint8_t flags, const char *key, const char *value,
-                          size_t *out_size);
+RecordStatus record_build(uint8_t *buffer, size_t capacity, uint8_t flags, const char *key, const char *value, size_t *out_size);
 RecordStatus record_parse(const uint8_t *buffer, size_t size, RecordHeader *header);
 
 uint8_t record_flags_set(uint8_t flags, uint8_t flag);

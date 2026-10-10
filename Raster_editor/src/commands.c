@@ -1,9 +1,11 @@
+#include "commands.h"
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "commands.h"
 #include "fill.h"
+#include "ppm.h"
 #include "pixel.h"
 
 static int is_command(const char *word, const char *name) {
@@ -37,7 +39,8 @@ void commands_print_help() {
     printf("  invert                    - inversion\n");
     printf("  bright <number>           - brightness, for example bright 40 or bright -40\n");
     printf("  fill <x> <y> <r> <g> <b>  - fill the area with color\n");
-    printf("  save <file>               - save to PPM\n");
+    printf("  load <file>               - read PPM\n");
+    printf("  save <file>               - write it to PPM\n");
     printf("  minmax                    - the darkest and lightest point\n");
     printf("  walk                      - inversion by passing the pointer\n");
     printf("  demo                      - copy vs address: transfer price\n");
@@ -94,6 +97,21 @@ static void do_bright(Editor *editor, const Words *words) {
     printf("Brightness changed to %d.\n", delta);
 }
 
+static void do_load(Editor *editor, const Words *words) {
+    if (words->count < 2) {
+        printf("Specify the file name: load <file>\n");
+        return;
+    }
+    const PpmStatus status = ppm_load(&editor->image, words->word[1]);
+    if (status != PPM_OK) {
+        printf("Couldn't read %s: %s\n", words->word[1], ppm_status_text(status));
+        return;
+    }
+    editor->loaded = 1;
+    editor_set_path(editor, words->word[1]);
+    printf("Read: %s, size %d x %d\n", words->word[1], editor->image.width, editor->image.height);
+}
+
 static void do_save(Editor *editor, const Words *words) {
     if (!require_image(editor)) {
         return;
@@ -138,7 +156,7 @@ static void do_fill(Editor *editor, const Words *words) {
     printf("Pixels recolored: %d, maximum recursion depth: %d\n",
            report.filled, report.max_depth);
     if (report.filled == 0) {
-        printf("Nothing has changed: the dot is already this color\n");
+        printf("Nothing has changed: the dot is already this color.\n");
     }
     if (report.truncated) {
         printf("Filling stopped: area is too large for recursion "
@@ -204,6 +222,8 @@ int commands_execute(Editor *editor, const Words *words) {
         do_bright(editor, words);
     } else if (is_command(name, "fill")) {
         do_fill(editor, words);
+    } else if (is_command(name, "load")) {
+        do_load(editor, words);
     } else if (is_command(name, "save")) {
         do_save(editor, words);
     } else if (is_command(name, "minmax")) {

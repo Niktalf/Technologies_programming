@@ -21,10 +21,10 @@ void logfile_init(LogFile *log)
 
 const char *logfile_status_text(const LogStatus status) {
     switch (status) {
-    case LOG_OK:       return "success";
-    case LOG_ERR_ARG:  return "invalid argument";
-    case LOG_ERR_OPEN: return "failed to open file";
-    default:           return "unknown error";
+        case LOG_OK:       return "success";
+        case LOG_ERR_ARG:  return "invalid argument";
+        case LOG_ERR_OPEN: return "failed to open file";
+        default:           return "unknown error";
     }
 }
 

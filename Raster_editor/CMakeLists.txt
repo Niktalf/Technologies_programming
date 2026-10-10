@@ -7,10 +7,11 @@ add_library(
         raster_editor_core
         src/commands.c
         src/editor.c
+        src/fill.c
+        src/image.c
         src/input.c
         src/pixel.c
-        src/image.c
-        src/fill.c
+        src/ppm.c
 )
 target_include_directories(raster_editor_core PUBLIC include)
 

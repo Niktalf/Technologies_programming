@@ -6,8 +6,10 @@ set(CMAKE_C_STANDARD 99)
 add_library(
         kvs_core
         src/cli.c
+        src/parser.c
         src/range.c
         src/record.c
+        src/script.c
         src/session.c
         src/store.c
 )
