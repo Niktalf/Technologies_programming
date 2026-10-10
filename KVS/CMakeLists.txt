@@ -6,9 +6,10 @@ set(CMAKE_C_STANDARD 99)
 add_library(
         kvs_core
         src/cli.c
-        src/store.c
-        src/record.c
         src/range.c
+        src/record.c
+        src/session.c
+        src/store.c
 )
 target_include_directories(kvs_core PUBLIC include)
 

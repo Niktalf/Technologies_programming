@@ -11,8 +11,7 @@
 #define CLI_LINE_MAX  256
 #define CLI_ARGS_MAX  8
 
-void cli_print_help()
-{
+void cli_print_help() {
     printf("Available commands:\n");
     printf("  put <key> <value>     - save a pair\n");
     printf("  get <key>             - get a value\n");
@@ -20,6 +19,10 @@ void cli_print_help()
     printf("  list                  - list all keys\n");
     printf("  sorted                - all pairs in ascending order of the key\n");
     printf("  range <from> <to>     - pairs with keys in the range, boundaries are included\n");
+    printf("  use <1|2>             - switch to another storage\n");
+    printf("  which                 - which storage is selected\n");
+    printf("  copy <key>            - copy the pair to another storage\n");
+    printf("  sizes                 - why is storage transferred to\n");
     printf("  stats                 - table occupancy and collisions\n");
     printf("  bench [n]             - compare hash and iteration on n keys\n");
     printf("  collide               - removing samples from the chain\n");
@@ -28,13 +31,11 @@ void cli_print_help()
     printf("  quit                  - exit\n");
 }
 
-static void report(const StoreStatus status)
-{
+static void report(const StoreStatus status) {
     fprintf(stderr, "Error: %s\n", store_status_text(status));
 }
 
-static void demo_record(const char *key, const char *value)
-{
+static void demo_record(const char *key, const char *value) {
     uint8_t buffer[512];
     size_t size = 0;
 
@@ -72,14 +73,12 @@ static void demo_record(const char *key, const char *value)
     buffer[2] = (uint8_t)(buffer[2] ^ 0x01u);
 }
 
-static void print_pair(const char *key, const char *value, void *context)
-{
+static void print_pair(const char *key, const char *value, void *context) {
     (void)context;
     printf("%s = %s\n", key, value);
 }
 
-static void print_stats(const Store *store)
-{
+static void print_stats(const Store *store) {
     StoreStats stats;
 
     store_stats(store, &stats);
@@ -92,13 +91,11 @@ static void print_stats(const Store *store)
 
 static Store bench_store;
 
-static double seconds_since(const clock_t start)
-{
+static double seconds_since(const clock_t start) {
     return (double)(clock() - start) / CLOCKS_PER_SEC;
 }
 
-static void run_bench(const long n)
-{
+static void run_bench(const long n) {
     if (n <= 0 || n > STORE_CAPACITY * 9 / 10) {
         printf("The number of keys must be from 1 to %d\n", STORE_CAPACITY * 9 / 10);
         return;
@@ -176,12 +173,12 @@ static void demo_collision()
     }
 }
 
-int cli_execute(Store *store, const int argc, char **argv)
-{
+int cli_execute(Session *session, const int argc, char **argv) {
     if (argc == 0) {
         return 1;
     }
 
+    Store *store = session_current(session);
     if (strcmp(argv[0], "put") == 0) {
         if (argc < 3) {
             fprintf(stderr, "put requires a key and a value\n");
@@ -246,7 +243,7 @@ int cli_execute(Store *store, const int argc, char **argv)
 
     if (strcmp(argv[0], "range") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "range требует две границы\n");
+            fprintf(stderr, "range requires two borders\n");
             return 1;
         }
         if (strcmp(argv[1], argv[2]) > 0) {
@@ -257,6 +254,56 @@ int cli_execute(Store *store, const int argc, char **argv)
         int depth = 0;
         const int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
         printf("Found is: %d, sorting recursion depth: %d\n", found, depth);
+        return 1;
+    }
+
+    if (strcmp(argv[0], "use") == 0) {
+        if (argc < 2) {
+            fprintf(stderr, "use requires storage number\n");
+            return 1;
+        }
+        const int number = (int) strtol(argv[1], NULL, 10);
+        if (!session_select(session, number)) {
+            fprintf(stderr, "Storage can be from 1 to %d\n", SESSION_STORES);
+            return 1;
+        }
+        printf("Storage %d (keys: %d) selected\n", number, store_count(session_current(session)));
+        return 1;
+    }
+
+    if (strcmp(argv[0], "which") == 0) {
+        printf("Current storage: %d, keys in it: %d\n",
+               session->current + 1, store_count(session_current(session)));
+        printf("In another keystore: %d\n", store_count(session_other(session)));
+        return 1;
+    }
+
+    if (strcmp(argv[0], "copy") == 0) {
+        if (argc < 2) {
+            fprintf(stderr, "copy requires a key\n");
+            return 1;
+        }
+
+
+        const char *value = NULL;
+        if (store_get(store, argv[1], &value) != STORE_OK) {
+            printf("The key is not in the current storage\n");
+            return 1;
+        }
+        Store *other = session_other(session);
+        if (store_put(other, argv[1], value, NULL) != STORE_OK) {
+            printf("Couldn't copy\n");
+            return 1;
+        }
+        printf("Copied to another storage\n");
+        return 1;
+    }
+
+    if (strcmp(argv[0], "sizes") == 0) {
+        printf("Storage size: %u bytes\n", (unsigned)sizeof(Store));
+        printf("Size of the pointer to it: %u bytes\n", (unsigned)sizeof(Store *));
+        printf("You cannot transfer the storage by value: a copy of 2.7 MB\n");
+        printf("won't fit on the stack, and the changes in it would have been lost anyway.\n");
         return 1;
     }
 
@@ -301,8 +348,7 @@ int cli_execute(Store *store, const int argc, char **argv)
     return 1;
 }
 
-static int split_words(char *line, char **argv, const int max_args)
-{
+static int split_words(char *line, char **argv, const int max_args) {
     int argc = 0;
     char *p = line;
 
@@ -321,8 +367,7 @@ static int split_words(char *line, char **argv, const int max_args)
     return argc;
 }
 
-void cli_run_interactive(Store *store)
-{
+void cli_run_interactive(Session *session) {
     char line[CLI_LINE_MAX];
     char *argv[CLI_ARGS_MAX];
     int running = 1;
@@ -344,7 +389,7 @@ void cli_run_interactive(Store *store)
         if (argc == 0) {
             continue;
         }
-        running = cli_execute(store, argc, argv);
+        running = cli_execute(session, argc, argv);
     }
     printf("The work is completed.\n");
 }

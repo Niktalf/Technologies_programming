@@ -1,16 +1,16 @@
 #include "cli.h"
-#include "store.h"
+#include "session.h"
 
-static Store store;
+static Session session;
 
 int main(int argc, char **argv)
 {
-    store_init(&store);
-
+    session_init(&session);
     if (argc > 1) {
-        cli_execute(&store, argc - 1, argv + 1);
+        cli_execute(&session, argc - 1, argv + 1);
         return 0;
     }
-    cli_run_interactive(&store);
+
+    cli_run_interactive(&session);
     return 0;
 }

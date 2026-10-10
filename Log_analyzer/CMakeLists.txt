@@ -10,9 +10,10 @@ add_library(
         src/logfile.c
         src/parse.c
         src/shell.c
+        src/sort.c
         src/stats.c
         src/timestamp.c
-        src/sort.c
+        src/view.c
 )
 target_include_directories(log_analyzer_core PUBLIC include)
 

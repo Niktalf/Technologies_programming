@@ -3,19 +3,17 @@
 
 #include "record.h"
 
-const char *record_status_text(const RecordStatus status)
-{
+const char *record_status_text(const RecordStatus status) {
     switch (status) {
-    case RECORD_OK:                 return "success";
-    case RECORD_ERR_ARG:            return "invalid argument";
-    case RECORD_ERR_TOO_LONG:       return "key or value is too long";
-    case RECORD_ERR_BAD_CHECKSUM:   return "checksum mismatch";
-    default:                        return "unknown error";
+        case RECORD_OK:                 return "success";
+        case RECORD_ERR_ARG:            return "invalid argument";
+        case RECORD_ERR_TOO_LONG:       return "key or value is too long";
+        case RECORD_ERR_BAD_CHECKSUM:   return "checksum mismatch";
+        default:                        return "unknown error";
     }
 }
 
-void record_pack_header(uint8_t *buffer, const RecordHeader *header)
-{
+void record_pack_header(uint8_t *buffer, const RecordHeader *header) {
     if (buffer == NULL || header == NULL) {
         return;
     }
@@ -29,8 +27,7 @@ void record_pack_header(uint8_t *buffer, const RecordHeader *header)
     buffer[7] = header->checksum;
 }
 
-void record_unpack_header(const uint8_t *buffer, RecordHeader *header)
-{
+void record_unpack_header(const uint8_t *buffer, RecordHeader *header) {
     if (buffer == NULL || header == NULL) {
         return;
     }
@@ -43,8 +40,7 @@ void record_unpack_header(const uint8_t *buffer, RecordHeader *header)
     header->checksum = buffer[7];
 }
 
-uint8_t record_checksum(const uint8_t *data, size_t length)
-{
+uint8_t record_checksum(const uint8_t *data, const size_t length) {
     uint8_t sum = 0;
 
     if (data == NULL) {
@@ -58,10 +54,9 @@ uint8_t record_checksum(const uint8_t *data, size_t length)
     return sum;
 }
 
-RecordStatus record_build(uint8_t *buffer, const size_t capacity,
-                          const uint8_t flags, const char *key, const char *value,
-                          size_t *out_size)
-{
+RecordStatus record_build(uint8_t *buffer, const size_t capacity, const uint8_t flags,
+    const char *key, const char *value, size_t *out_size) {
+
     if (buffer == NULL || key == NULL || value == NULL || out_size == NULL) {
         return RECORD_ERR_ARG;
     }
@@ -92,8 +87,7 @@ RecordStatus record_build(uint8_t *buffer, const size_t capacity,
     return RECORD_OK;
 }
 
-RecordStatus record_parse(const uint8_t *buffer, size_t size, RecordHeader *header)
-{
+RecordStatus record_parse(const uint8_t *buffer, const size_t size, RecordHeader *header) {
     if (buffer == NULL || header == NULL || size < RECORD_HEADER_SIZE) {
         return RECORD_ERR_ARG;
     }
@@ -109,23 +103,19 @@ RecordStatus record_parse(const uint8_t *buffer, size_t size, RecordHeader *head
     return RECORD_OK;
 }
 
-uint8_t record_flags_set(const uint8_t flags, const uint8_t flag)
-{
+uint8_t record_flags_set(const uint8_t flags, const uint8_t flag) {
     return (uint8_t)(flags | flag);
 }
 
-uint8_t record_flags_clear(const uint8_t flags, const uint8_t flag)
-{
+uint8_t record_flags_clear(const uint8_t flags, const uint8_t flag) {
     return (uint8_t)(flags & (uint8_t)~flag);
 }
 
-int record_flags_has(const uint8_t flags, const uint8_t flag)
-{
+int record_flags_has(const uint8_t flags, const uint8_t flag) {
     return (flags & flag) != 0;
 }
 
-void record_flags_print(const uint8_t flags)
-{
+void record_flags_print(const uint8_t flags) {
     int printed = 0;
 
     printf("Flags: 0x%02X (", (unsigned)flags);

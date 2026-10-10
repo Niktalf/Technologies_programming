@@ -13,9 +13,7 @@ uint8_t pixel_green(Pixel pixel);
 uint8_t pixel_blue(Pixel pixel);
 
 Pixel pixel_adjust_brightness(Pixel pixel, int delta);
-
 Pixel pixel_invert(Pixel pixel);
-
 uint8_t pixel_luminance(Pixel pixel);
 Pixel   pixel_to_gray(Pixel pixel);
 

@@ -5,8 +5,7 @@
 
 static unsigned char visited[MAP_HEIGHT][MAP_WIDTH];
 
-static void fill(const int x, const int y, const int depth, ReachReport *report)
-{
+static void fill(const int x, const int y, const int depth, ReachReport *report) {
     if (!map_walkable(x, y)) {
         return;
     }
@@ -30,8 +29,7 @@ static void fill(const int x, const int y, const int depth, ReachReport *report)
     fill(x, y - 1, depth + 1, report);
 }
 
-ReachReport reach_check(const int from_x, const int from_y)
-{
+ReachReport reach_check(const int from_x, const int from_y) {
     ReachReport report;
 
     report.cells = 0;

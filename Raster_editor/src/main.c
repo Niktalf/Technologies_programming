@@ -6,8 +6,7 @@
 
 static Editor editor;
 
-static void print_usage(const char *program_name)
-{
+static void print_usage(const char *program_name) {
     printf("Usage:\n");
     printf("  %s                               interactive mode\n", program_name);
     printf("  %s <file> <operation> [arguments] one operation, result in file\n", program_name);
@@ -15,8 +14,7 @@ static void print_usage(const char *program_name)
     printf("  %s checker.ppm gen checker 16\n", program_name);
 }
 
-static int run_once(const int argc, char **argv)
-{
+static int run_once(const int argc, char **argv) {
     if (argc < 3) {
         print_usage(argv[0]);
         return 1;
@@ -38,8 +36,7 @@ static int run_once(const int argc, char **argv)
     return 0;
 }
 
-static void run_interactive()
-{
+static void run_interactive() {
     Words words;
 
     editor_init(&editor);
@@ -59,8 +56,7 @@ static void run_interactive()
     printf("The work is completed.\n");
 }
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
     if (argc > 1) {
         return run_once(argc, argv);
     }

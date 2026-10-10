@@ -2,12 +2,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "generator.h"
 #include "level.h"
 #include "shell.h"
 #include "sort.h"
 #include "stats.h"
+#include "view.h"
 #include "timestamp.h"
 
 #define SHELL_LINE_MAX 256
@@ -21,6 +23,10 @@ static void print_help(void)
     printf("  count                       - how many records and rows\n");
     printf("  head                        - first ten lines\n");
     printf("  tail                        - last ten lines\n");
+    printf("  order time|level|module     - viewing order (recordings don't move)\n");
+    printf("  view [n]                    - show n records in the selected order\n");
+    printf("  span                        - the earliest and latest time\n");
+    printf("  cost                        - compare the sorting of pointers and records\n");
     printf("  sort                        - arrange record by time\n");
     printf("  since <date> <time>         - records start from the moment, for example since 2026-03-15 12:00:00\n");
     printf("  stats                       - records by levels\n");
@@ -34,8 +40,7 @@ static void print_help(void)
     printf("  quit                        - exit\n");
 }
 
-static int read_words(char *buffer, const size_t size, char **words, const int max_words)
-{
+static int read_words(char *buffer, const size_t size, char **words, const int max_words) {
     if (fgets(buffer, (int)size, stdin) == NULL) {
         return -1;
     }
@@ -65,8 +70,7 @@ static int read_words(char *buffer, const size_t size, char **words, const int m
     return count;
 }
 
-static void demo_time()
-{
+static void demo_time() {
     static const int SAMPLES[][6] = {
         { 2026,  3, 15, 23, 59, 59 },
         { 2026,  3, 16,  0,  0,  0 },
@@ -96,8 +100,7 @@ static void demo_time()
            (long long)timestamp_pack(2026, 13, 1, 0, 0, 0), (long long)TIMESTAMP_INVALID);
 }
 
-static LevelMask apply_level_command(LevelMask mask, char **words, int count)
-{
+static LevelMask apply_level_command(LevelMask mask, char **words, const int count) {
     if (count < 2) {
         printf("level requires at least one level, all or none\n");
         return mask;
@@ -122,8 +125,7 @@ static LevelMask apply_level_command(LevelMask mask, char **words, int count)
     return mask;
 }
 
-static void print_load_report(const LogFile *log)
-{
+static void print_load_report(const LogFile *log) {
     printf("File: %s\n", log->path);
     printf("Line: %ld, entries: %ld\n", log->lines, log->count);
     if (log->broken > 0) {
@@ -138,8 +140,7 @@ static void print_load_report(const LogFile *log)
     }
 }
 
-static int require_log(const LogFile *log)
-{
+static int require_log(const LogFile *log) {
     if (!log->loaded) {
         printf("The log is not loaded. The load <file> or gen command.\n");
         return 0;
@@ -147,8 +148,7 @@ static int require_log(const LogFile *log)
     return 1;
 }
 
-static void do_load(LogFile *log, char **words, int count)
-{
+static void do_load(LogFile *log, char **words, const int count) {
     if (count < 2) {
         printf("Specify the file: load <файл>\n");
         return;
@@ -161,17 +161,16 @@ static void do_load(LogFile *log, char **words, int count)
     print_load_report(log);
 }
 
-static void do_gen(char **words, int count)
-{
+static void do_gen(char **words, const int count) {
     if (count < 3) {
         printf("Usage: gen <file> <count of lines> [grain]\n");
         return;
     }
 
     char *end;
-    long lines = strtol(words[2], &end, 10);
+    const long lines = strtol(words[2], &end, 10);
     if (*end != '\0' || lines <= 0) {
-        printf("Число строк должно быть положительным числом\n");
+        printf("The number of lines must be a positive number\n");
         return;
     }
 
@@ -184,20 +183,81 @@ static void do_gen(char **words, int count)
         }
     }
     if (!generator_write(words[1], lines, (unsigned int)seed)) {
-        printf("Failed to create file: %s\n", words[1]);
+        printf("Не удалось создать файл: %s\n", words[1]);
         return;
     }
-    printf("Create %s: %ld lines, grain %lu\n", words[1], lines, seed);
+    printf("Создан %s: %ld строк, зерно %lu\n", words[1], lines, seed);
 }
 
-static void do_sort(LogFile *log)
+static void do_order(const LogFile *log, char **words, const int count) {
+    Order order = ORDER_TIME;
+
+    if (count >= 2) {
+        if (strcmp(words[1], "level") == 0) {
+            order = ORDER_LEVEL;
+        } else if (strcmp(words[1], "module") == 0) {
+            order = ORDER_MODULE;
+        } else if (strcmp(words[1], "time") != 0) {
+            printf("The order can be time, level, or module\n");
+            return;
+        }
+    }
+    printf("Sorted pointers: %ld, order %s.\n",
+           view_sort(log, order), order_name(order));
+    printf("The records themselves did not move: head still shows them\n");
+    printf("in the order in which they were read from the file.\n");
+}
+
+static void print_time(const Timestamp value) {
+    int y, mo, d, h, mi, s;
+
+    timestamp_unpack(value, &y, &mo, &d, &h, &mi, &s);
+    printf("%04d-%02d-%02d %02d:%02d:%02d", y, mo, d, h, mi, s);
+}
+
+static void do_span(const LogFile *log)
 {
+    Timestamp first = 0;
+    Timestamp last = 0;
+
+    if (!logfile_time_range(log, &first, &last)) {
+        printf("There are no records.\n");
+        return;
+    }
+    printf("earliest:  ");
+    print_time(first);
+    printf("\nlatest: ");
+    print_time(last);
+    printf("\n");
+}
+
+static LogRecord copy_space[LOGFILE_CAPACITY];
+
+static void do_cost(const LogFile *log) {
+    clock_t start = clock();
+    view_sort(log, ORDER_TIME);
+    const double by_pointers = (double) (clock() - start) / CLOCKS_PER_SEC;
+
+    for (long i = 0; i < log->count; ++i) {
+        copy_space[i] = log->records[i];
+    }
+
+    start = clock();
+    sort_records_for_cost(copy_space, log->count);
+    const double by_records = (double) (clock() - start) / CLOCKS_PER_SEC;
+
+    printf("Records: %ld, size of one record: %u bytes\n",
+           log->count, (unsigned)sizeof(LogRecord));
+    printf("Sorting pointers: %.4f с\n", by_pointers);
+    printf("Sorting the records themselves: %.4f с\n", by_records);
+}
+
+static void do_sort(LogFile *log) {
     const int depth = sort_by_time(log);
     printf("Entries sorted: %ld, maximum recursion depth: %d\n", log->count, depth);
 }
 
-static void do_since(LogFile *log, char **words, const int count)
-{
+static void do_since(LogFile *log, char **words, const int count) {
     if (count < 3) {
         printf("Usage: since <YYYY-MM-DD> <HH:MM:CC>\n");
         return;
@@ -222,7 +282,7 @@ static void do_since(LogFile *log, char **words, const int count)
 
     const long index = search_not_before(log, moment);
     if (index == log->count) {
-        printf("ЗThere is no record before this moment.\n");
+        printf("There is no record before this moment.\n");
         return;
     }
     printf("The first suitable entry is the %ld number from %ld:\n", index + 1, log->count);
@@ -231,8 +291,7 @@ static void do_since(LogFile *log, char **words, const int count)
     }
 }
 
-void shell_run(LogFile *log)
-{
+void shell_run(LogFile *log) {
     char line[SHELL_LINE_MAX];
     char *words[SHELL_WORDS_MAX];
     LevelMask mask = LEVEL_MASK_ALL;
@@ -244,7 +303,7 @@ void shell_run(LogFile *log)
     } else {
         printf("The log is not loaded.\n");
     }
-    printf("Type help for a list of commands.\n");
+    printf("Type 'help' for a list of commands.\n");
 
     while (running) {
         printf("> ");
@@ -273,6 +332,27 @@ void shell_run(LogFile *log)
         } else if (strcmp(words[0], "tail") == 0) {
             if (require_log(log)) {
                 logfile_print_tail(log, LOGFILE_SHOW);
+            }
+        } else if (strcmp(words[0], "order") == 0) {
+            if (require_log(log)) {
+                do_order(log, words, count);
+            }
+        } else if (strcmp(words[0], "view") == 0) {
+            if (require_log(log)) {
+                long n = count >= 2 ? strtol(words[1], NULL, 10) : LOGFILE_SHOW;
+
+                if (view_count() == 0) {
+                    view_sort(log, ORDER_TIME);
+                }
+                view_print(n > 0 ? n : LOGFILE_SHOW);
+            }
+        } else if (strcmp(words[0], "span") == 0) {
+            if (require_log(log)) {
+                do_span(log);
+            }
+        } else if (strcmp(words[0], "cost") == 0) {
+            if (require_log(log)) {
+                do_cost(log);
             }
         } else if (strcmp(words[0], "sort") == 0) {
             if (require_log(log)) {

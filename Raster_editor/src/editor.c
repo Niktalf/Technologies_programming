@@ -3,8 +3,7 @@
 
 #include "editor.h"
 
-void editor_init(Editor *editor)
-{
+void editor_init(Editor *editor) {
     if (editor == NULL) {
         return;
     }
@@ -13,8 +12,7 @@ void editor_init(Editor *editor)
     image_init(&editor->image);
 }
 
-void editor_set_path(Editor *editor, const char *path)
-{
+void editor_set_path(Editor *editor, const char *path) {
     if (editor == NULL || path == NULL) {
         return;
     }
@@ -22,8 +20,7 @@ void editor_set_path(Editor *editor, const char *path)
     editor->path[sizeof editor->path - 1] = '\0';
 }
 
-void editor_print_info(const Editor *editor)
-{
+void editor_print_info(const Editor *editor) {
     if (editor == NULL) {
         return;
     }

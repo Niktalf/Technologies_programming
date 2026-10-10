@@ -6,8 +6,7 @@
 #define MINUTES_IN_HOUR 60
 #define SECONDS_IN_MIN  60
 
-Timestamp timestamp_pack(const int year, const int month, const int day, const int hour, const int minute, const int second)
-{
+Timestamp timestamp_pack(const int year, const int month, const int day, const int hour, const int minute, const int second) {
     if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31
         || hour < 0 || hour > 23 || minute < 0 || minute > 59
         || second < 0 || second > 59) {
@@ -23,9 +22,7 @@ Timestamp timestamp_pack(const int year, const int month, const int day, const i
     return value;
 }
 
-void timestamp_unpack(Timestamp value, int *year, int *month, int *day,
-                      int *hour, int *minute, int *second)
-{
+void timestamp_unpack(Timestamp value, int *year, int *month, int *day, int *hour, int *minute, int *second) {
     if (value < 0) {
         return;
     }
@@ -42,8 +39,7 @@ void timestamp_unpack(Timestamp value, int *year, int *month, int *day,
     if (year != NULL)   { *year = (int)value; }
 }
 
-int timestamp_hour(const Timestamp value)
-{
+int timestamp_hour(const Timestamp value) {
     if (value < 0) {
         return -1;
     }

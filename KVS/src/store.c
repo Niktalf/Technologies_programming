@@ -4,8 +4,7 @@
 
 #define INDEX_MASK (STORE_CAPACITY - 1)
 
-void store_init(Store *store)
-{
+void store_init(Store *store) {
     if (store == NULL) {
         return;
     }
@@ -16,8 +15,7 @@ void store_init(Store *store)
     store->deleted = 0;
 }
 
-const char *store_status_text(const StoreStatus status)
-{
+const char *store_status_text(const StoreStatus status) {
     switch (status) {
         case STORE_OK:            return "success";
         case STORE_ERR_ARG:       return "invalid argument";
@@ -28,8 +26,7 @@ const char *store_status_text(const StoreStatus status)
     }
 }
 
-unsigned long store_hash(const char *key)
-{
+unsigned long store_hash(const char *key) {
     unsigned long hash = 5381;
 
     while (*key != '\0') {
@@ -39,13 +36,11 @@ unsigned long store_hash(const char *key)
     return hash;
 }
 
-int store_home(const char *key)
-{
+int store_home(const char *key) {
     return (int)(store_hash(key) & INDEX_MASK);
 }
 
-static int find_cell(const Store *store, const char *key)
-{
+static int find_cell(const Store *store, const char *key) {
     int index = store_home(key);
 
     for (int probes = 0; probes < STORE_CAPACITY; ++probes) {
@@ -62,8 +57,7 @@ static int find_cell(const Store *store, const char *key)
     return -1;
 }
 
-StoreStatus store_put(Store *store, const char *key, const char *value, int *was_present)
-{
+StoreStatus store_put(Store *store, const char *key, const char *value, int *was_present) {
 
     if (store == NULL || key == NULL || value == NULL || key[0] == '\0') {
         return STORE_ERR_ARG;
@@ -113,8 +107,7 @@ StoreStatus store_put(Store *store, const char *key, const char *value, int *was
     return STORE_OK;
 }
 
-StoreStatus store_get(const Store *store, const char *key, const char **out_value)
-{
+StoreStatus store_get(const Store *store, const char *key, const char **out_value) {
     if (store == NULL || key == NULL || out_value == NULL) {
         return STORE_ERR_ARG;
     }
@@ -126,14 +119,12 @@ StoreStatus store_get(const Store *store, const char *key, const char **out_valu
     return STORE_OK;
 }
 
-StoreStatus store_get_linear(const Store *store, const char *key, const char **out_value)
-{
-    int i;
-
+StoreStatus store_get_linear(const Store *store, const char *key, const char **out_value) {
     if (store == NULL || key == NULL || out_value == NULL) {
         return STORE_ERR_ARG;
     }
-    for (i = 0; i < STORE_CAPACITY; ++i) {
+
+    for (int i = 0; i < STORE_CAPACITY; ++i) {
         if (store->cells[i].state == CELL_USED && strcmp(store->cells[i].key, key) == 0) {
             *out_value = store->cells[i].value;
             return STORE_OK;
@@ -142,8 +133,7 @@ StoreStatus store_get_linear(const Store *store, const char *key, const char **o
     return STORE_ERR_NOT_FOUND;
 }
 
-StoreStatus store_remove(Store *store, const char *key)
-{
+StoreStatus store_remove(Store *store, const char *key) {
     if (store == NULL || key == NULL) {
         return STORE_ERR_ARG;
     }
@@ -158,15 +148,11 @@ StoreStatus store_remove(Store *store, const char *key)
     return STORE_OK;
 }
 
-int store_count(const Store *store)
-{
+int store_count(const Store *store) {
     return store != NULL ? store->count : 0;
 }
 
-void store_for_each(const Store *store,
-                    void (*visit)(const char *key, const char *value, void *context),
-                    void *context)
-{
+void store_for_each(const Store *store, void (*visit)(const char *key, const char *value, void *context), void *context) {
     if (store == NULL || visit == NULL) {
         return;
     }
@@ -178,8 +164,7 @@ void store_for_each(const Store *store,
     }
 }
 
-void store_stats(const Store *store, StoreStats *stats)
-{
+void store_stats(const Store *store, StoreStats *stats) {
     stats->count = store->count;
     stats->capacity = STORE_CAPACITY;
     stats->deleted = store->deleted;

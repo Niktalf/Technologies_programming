@@ -5,8 +5,7 @@
 
 #define BAR_WIDTH 50
 
-static int module_index(Stats *stats, const char *module)
-{
+static int module_index(Stats *stats, const char *module) {
     for (int i = 0; i < stats->module_count; ++i) {
         if (strcmp(stats->modules[i], module) == 0) {
             return i;
@@ -20,8 +19,7 @@ static int module_index(Stats *stats, const char *module)
     return stats->module_count++;
 }
 
-void stats_collect(const LogFile *log, Stats *stats)
-{
+void stats_collect(const LogFile *log, Stats *stats) {
     memset(stats, 0, sizeof *stats);
     for (long i = 0; i < log->count; ++i) {
         const LogRecord *r = &log->records[i];
@@ -40,16 +38,14 @@ void stats_collect(const LogFile *log, Stats *stats)
     }
 }
 
-void stats_print_levels(const Stats *stats, long total)
-{
+void stats_print_levels(const Stats *stats, const long total) {
     for (int i = 0; i < LEVEL_COUNT; ++i) {
         const long percent = total > 0 ? stats->by_level[i] * 100 / total : 0;
         printf("  %-5s %7ld  %3ld%%\n", level_name((Level)i), stats->by_level[i], percent);
     }
 }
 
-void stats_print_hours(const Stats *stats)
-{
+void stats_print_hours(const Stats *stats) {
     long peak = 0;
     int h;
 
@@ -69,8 +65,7 @@ void stats_print_hours(const Stats *stats)
     }
 }
 
-void stats_print_modules(const Stats *stats)
-{
+void stats_print_modules(const Stats *stats) {
     for (int i = 0; i < stats->module_count; ++i) {
         printf("  %-12s %7ld\n", stats->modules[i], stats->module_counts[i]);
     }

@@ -11,16 +11,14 @@ static Pair pairs[STORE_CAPACITY];
 static Pair buffer[STORE_CAPACITY];
 static int  pair_count;
 
-static void collect(const char *key, const char *value, void *context)
-{
+static void collect(const char *key, const char *value, void *context) {
     (void)context;
     pairs[pair_count].key = key;
     pairs[pair_count].value = value;
     ++pair_count;
 }
 
-static void merge(const int left, const int middle, const int right)
-{
+static void merge(const int left, const int middle, const int right) {
     int i = left;
     int j = middle;
     int k = left;
@@ -43,8 +41,7 @@ static void merge(const int left, const int middle, const int right)
     }
 }
 
-static void merge_sort(const int left, const int right, const int depth, int *max_depth)
-{
+static void merge_sort(const int left, const int right, const int depth, int *max_depth) {
     if (depth > *max_depth) {
         *max_depth = depth;
     }
@@ -52,13 +49,13 @@ static void merge_sort(const int left, const int right, const int depth, int *ma
         return;
     }
     const int middle = left + (right - left) / 2;
+
     merge_sort(left, middle, depth + 1, max_depth);
     merge_sort(middle, right, depth + 1, max_depth);
     merge(left, middle, right);
 }
 
-static int lower_bound(int low, int high, const char *key)
-{
+static int lower_bound(const int low, const int high, const char *key) {
     if (low >= high) {
         return low;
     }
@@ -69,20 +66,20 @@ static int lower_bound(int low, int high, const char *key)
     return lower_bound(low, middle, key);
 }
 
-static int upper_bound(const int low, const int high, const char *key)
-{
+static int upper_bound(const int low, const int high, const char *key) {
     if (low >= high) {
         return low;
     }
-    int middle = low + (high - low) / 2;
+
+    const int middle = low + (high - low) / 2;
     if (strcmp(pairs[middle].key, key) <= 0) {
         return upper_bound(middle + 1, high, key);
     }
+
     return upper_bound(low, middle, key);
 }
 
-static void prepare(const Store *store, int *depth_out)
-{
+static void prepare(const Store *store, int *depth_out) {
     int depth = 0;
 
     pair_count = 0;
@@ -93,9 +90,7 @@ static void prepare(const Store *store, int *depth_out)
     }
 }
 
-int range_query(const Store *store, const char *from, const char *to,
-                const RangeVisitor visit, void *context, int *depth_out)
-{
+int range_query(const Store *store, const char *from, const char *to, const RangeVisitor visit, void *context, int *depth_out) {
     if (store == NULL || from == NULL || to == NULL || visit == NULL) {
         return 0;
     }
@@ -113,8 +108,7 @@ int range_query(const Store *store, const char *from, const char *to,
     return last - first;
 }
 
-int range_all(const Store *store, const RangeVisitor visit, void *context, int *depth_out)
-{
+int range_all(const Store *store, const RangeVisitor visit, void *context, int *depth_out) {
     if (store == NULL || visit == NULL) {
         return 0;
     }

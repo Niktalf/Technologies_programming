@@ -4,8 +4,7 @@
 
 #include "input.h"
 
-static void lower_first_word(const Words *words)
-{
+static void lower_first_word(const Words *words) {
     if (words->count == 0) {
         return;
     }
@@ -14,14 +13,12 @@ static void lower_first_word(const Words *words)
     }
 }
 
-int input_read_words(Words *words)
-{
+int input_read_words(Words *words) {
     words->count = 0;
 
     if (fgets(words->line, INPUT_LINE_MAX, stdin) == NULL) {
         return 0;
     }
-
     if (strchr(words->line, '\n') == NULL) {
         int c;
         while ((c = getchar()) != EOF && c != '\n') {}
@@ -36,8 +33,7 @@ int input_read_words(Words *words)
     return 1;
 }
 
-void input_from_args(Words *words, const int argc, char **argv)
-{
+void input_from_args(Words *words, const int argc, char **argv) {
     words->count = 0;
     words->line[0] = '\0';
     for (int i = 0; i < argc && i < INPUT_WORDS_MAX; ++i) {

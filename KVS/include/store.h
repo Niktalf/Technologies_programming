@@ -40,9 +40,7 @@ typedef struct {
 } StoreStats;
 
 void store_init(Store *store);
-
 unsigned long store_hash(const char *key);
-
 int store_home(const char *key);
 
 StoreStatus store_put(Store *store, const char *key, const char *value, int *was_present);
@@ -51,13 +49,8 @@ StoreStatus store_remove(Store *store, const char *key);
 int         store_count(const Store *store);
 
 StoreStatus store_get_linear(const Store *store, const char *key, const char **out_value);
-
-void store_for_each(const Store *store,
-                    void (*visit)(const char *key, const char *value, void *context),
-                    void *context);
-
+void store_for_each(const Store *store, void (*visit)(const char *key, const char *value, void *context), void *context);
 void store_stats(const Store *store, StoreStats *stats);
-
 const char *store_status_text(StoreStatus status);
 
 #endif // STORE_H

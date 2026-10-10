@@ -8,8 +8,7 @@
 
 static char last_word[COMMAND_BUFFER_SIZE];
 
-static void discard_rest_of_line(const char *buffer)
-{
+static void discard_rest_of_line(const char *buffer) {
     int c;
 
     if (strchr(buffer, '\n') != NULL) {
@@ -18,8 +17,7 @@ static void discard_rest_of_line(const char *buffer)
     while ((c = getchar()) != EOF && c != '\n') {}
 }
 
-static void trim(char *buffer)
-{
+static void trim(char *buffer) {
     size_t length = strlen(buffer);
     size_t start = 0;
 
@@ -34,20 +32,16 @@ static void trim(char *buffer)
     }
 }
 
-static void to_lower(char *buffer)
-{
-    size_t i;
-
-    for (i = 0; buffer[i] != '\0'; ++i) {
+static void to_lower(char *buffer) {
+    for (size_t i = 0; buffer[i] != '\0'; ++i) {
         buffer[i] = (char)tolower((unsigned char)buffer[i]);
     }
 }
 
-Command command_read()
-{
+Command command_read() {
     char buffer[COMMAND_BUFFER_SIZE];
 
-    if (fgets(buffer, (int)sizeof buffer, stdin) == NULL) {
+    if (fgets(buffer, sizeof buffer, stdin) == NULL) {
         last_word[0] = '\0';
         return CMD_EOF;
     }
@@ -79,6 +73,15 @@ Command command_read()
     if (strcmp(buffer, "west") == 0 || strcmp(buffer, "w") == 0) {
         return CMD_WEST;
     }
+    if (strcmp(buffer, "take") == 0) {
+        return CMD_TAKE;
+    }
+    if (strcmp(buffer, "nearest") == 0) {
+        return CMD_NEAREST;
+    }
+    if (strcmp(buffer, "demo") == 0) {
+        return CMD_DEMO;
+    }
     if (strcmp(buffer, "reach") == 0) {
         return CMD_REACH;
     }
@@ -103,7 +106,6 @@ Command command_read()
     return CMD_UNKNOWN;
 }
 
-const char *command_last_word()
-{
+const char *command_last_word() {
     return last_word;
 }
