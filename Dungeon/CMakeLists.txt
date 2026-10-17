@@ -3,17 +3,18 @@ project(dungeon LANGUAGES C)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 
-#add_library(
-#        ${PROJECT_NAME}_core
-#        INTERFACE
-#)
+add_library(
+        ${PROJECT_NAME}_core
+        src/game.c
+)
 
-#target_include_directories(${PROJECT_NAME} PRIVATE include)
+target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 
 add_executable(
         ${PROJECT_NAME}
         src/main.c
 )
 
-#target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
