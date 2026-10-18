@@ -1,50 +1,65 @@
 #pragma once
 
-#include <cstdio>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "journal_file.hpp"
 #include "record.hpp"
 
-// Результат операции хранилища — те же коды, что KvStatus в версии на C,
-// кроме нехватки памяти: её стандартные контейнеры сообщают иначе,
-// и об этом речь пойдёт на практике 10.
+// Результат операции хранилища — те же коды, что KvStatus в версии на C.
 enum class KvStatus { ok, bad_argument, not_found, cannot_open, io_error };
+
+// Практика 10: ошибка открытия и записи приходит исключением. KvError —
+// наследник std::runtime_error, кроме текста хранит код.
+class KvError : public std::runtime_error {
+public:
+    KvError(KvStatus status, const std::string& path);
+
+    KvStatus status() const { return status_; }
+
+private:
+    KvStatus status_;
+};
 
 // Хранилище ключ-значение с журналом на диске.
 //
-// Хеш-таблица — стандартная std::unordered_map. Свою вы написали
-// на практиках 3 и 7; здесь время занятия дороже.
+// Практика 10: хранилище открывается конструктором и закрывается
+// деструктором. Конструктор открывает журнал, перечитывает его и собирает
+// таблицу; каждая операция дописывается в журнал; деструктор поля journal_
+// сбрасывает буфер и закрывает файл. Методов open и close больше нет.
 //
-// Каждая операция дописывается в журнал и сразу сбрасывается на диск,
-// при открытии журнал перечитывается и таблица собирается заново —
-// как в версии на C (практика 8).
-//
-// Открывает и закрывает хранилище пара методов open и close. Забыть close —
-// значит оставить файл открытым: объект о себе не позаботится. Копировать
-// хранилище тоже нельзя: копия получила бы тот же FILE *, и два close
-// закрыли бы один файл дважды. Обе беды уберут конструктор и деструктор
-// на практике 10.
+// Правило пяти. Деструктор объявлен (он печатает сообщение в опытах),
+// и из-за этого компилятор сам перемещение не создаст. Поэтому все пять
+// особых методов объявлены явно: копирование запрещено, перемещение —
+// созданное компилятором по умолчанию: оно перемещает поле за полем,
+// а JournalFile умеет перемещаться сам.
 class Store {
 public:
     static const char* status_text(KvStatus status);
 
+    // Закрытое хранилище: журнала нет, таблица пуста.
+    Store() = default;
+
     // Открывает журнал path. Файла может не быть — тогда создаётся пустая
-    // база. Повреждённый хвост журнала отрезается. Если хранилище было
-    // открыто, сначала закрывается. При ошибке хранилище остаётся закрытым.
-    KvStatus open(const std::string& path);
+    // база. Повреждённый хвост журнала отрезается. Если журнал не открылся —
+    // KvError, и объекта нет.
+    explicit Store(const std::string& path);
 
-    // Закрывает журнал и очищает таблицу. Закрыть закрытое безопасно.
-    void close();
+    ~Store();
 
-    bool is_open() const { return journal_ != nullptr; }
-    const std::string& path() const { return path_; }
+    Store(const Store&) = delete;
+    Store& operator=(const Store&) = delete;
+    Store(Store&&) = default;
+    Store& operator=(Store&&) = default;
 
-    // Операции. Каждая сначала пишет в журнал, потом меняет память:
-    // если программа умрёт между ними, при следующем открытии запись
-    // прочитается из журнала. existed — был ли ключ до операции.
+    bool is_open() const { return journal_.is_open(); }
+    const std::string& path() const { return journal_.path(); }
+
+    // Операции. Каждая сначала пишет в журнал, потом меняет память.
+    // existed — был ли ключ до операции.
     KvStatus put(const std::string& key, const std::string& value, bool& existed);
     KvStatus get(const std::string& key, std::string& value) const;
     KvStatus remove(const std::string& key);
@@ -52,8 +67,7 @@ public:
 
     std::size_t size() const { return data_.size(); }
 
-    // Сколько записей в журнале и сколько из них уже не нужны: по этой доле
-    // на практике 15 будет запускаться уплотнение.
+    // Сколько записей в журнале и сколько из них уже не нужны.
     long journal_records() const { return records_; }
     long journal_garbage() const { return garbage_; }
 
@@ -63,15 +77,15 @@ public:
     // Все пары в порядке таблицы, то есть в произвольном.
     std::vector<std::pair<std::string, std::string>> pairs() const;
 
-private:
-    KvStatus append(const Record& record);
-    void apply_in_memory(const Record& record);
-    KvStatus recover(long& good_end);
-    KvStatus cut_tail(long good_end);
+    static bool trace;
 
+private:
+    void apply_in_memory(const Record& record);
+
+    // Поля создаются в порядке объявления и разрушаются в обратном:
+    // журнал создаётся первым и закрывается последним.
+    JournalFile journal_;
     std::unordered_map<std::string, std::string> data_;
-    std::FILE* journal_ = nullptr;   // nullptr — хранилище закрыто
-    std::string path_;
     long records_ = 0;   // записей в журнале
     long garbage_ = 0;   // из них уже не нужных
     long broken_ = 0;    // записей, отброшенных при открытии как повреждённые

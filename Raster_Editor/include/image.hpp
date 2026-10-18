@@ -5,9 +5,7 @@
 
 #include "color.hpp"
 
-// Результат операции, которая может не получиться. Те же причины, что
-// у ImgStatus в версии на C, только нехватки памяти больше нет: память
-// здесь не выделяется. Вместо неё — слишком большое изображение.
+// Результат операции, которая может не получиться.
 enum class ImageStatus { ok, cannot_open, bad_format, corrupt, too_large, bad_argument,
                          write_failed };
 
@@ -21,26 +19,48 @@ struct FillReport {
     int max_stack = 0;
 };
 
-// Практика 9: изображение — класс.
+// Практика 10: изображение само управляет своей памятью.
 //
-// Размер задаётся командами, но память под пиксели пока не выделяется:
-// поле pixels_ — массив наибольшего размера, 1024 на 1024 точки, и
-// изображение занимает его начало, width_ * height_ точек подряд. Объект
-// весит три мегабайта, поэтому в программе изображения не локальные
-// переменные, а поля редактора, который создаётся один раз как static.
-// Выделять ровно столько, сколько нужно, класс научится на практике 10.
+// Конструктор получает размеры и выделяет буфер пикселей ровно под них,
+// деструктор освобождает его. На практике 9 пиксели лежали в массиве
+// наибольшего размера внутри объекта, и объект весил три мегабайта;
+// теперь он хранит указатель на буфер в куче и весит несколько байт.
+//
+// Правило пяти. Класс владеет памятью, поэтому все пять особых методов
+// написаны явно. Копирование по умолчанию скопировало бы указатель, и два
+// объекта освобождали бы один буфер, — поэтому копия делает собственный
+// буфер. Перемещение буфер не копирует, а забирает.
 class Image {
 public:
-    static constexpr int MAX_SIDE = 1024;
+    static constexpr int MAX_SIDE = 8192;
 
     static const char* status_text(ImageStatus status);
 
-    // Чёрное изображение width x height. Неверный размер — bad_argument
-    // или too_large, и изображение не меняется. Конструкторов пока нет —
-    // начальное состояние задаёт этот метод.
-    ImageStatus reset(int width, int height);
+    // Пустое изображение 0 на 0 без буфера. Так выглядит редактор, в котором
+    // ещё ничего не открыто, и объект, из которого переместили пиксели.
+    Image();
 
-    bool empty() const { return width_ == 0; }
+    // Чёрное изображение width x height. Неразумный размер —
+    // std::invalid_argument с текстом причины; если памяти не хватило,
+    // new возбудит std::bad_alloc. В обоих случаях объект не создаётся.
+    Image(int width, int height);
+
+    // Копия получает собственный буфер с теми же пикселями.
+    Image(const Image& other);
+    Image& operator=(const Image& other);
+
+    // Перемещение забирает буфер, источник остаётся пустым изображением.
+    // noexcept: перемещение ничего не выделяет и не может бросить исключение.
+    Image(Image&& other) noexcept;
+    Image& operator=(Image&& other) noexcept;
+
+    ~Image();
+
+    // Подходит ли размер. Конструктор пользуется этой проверкой сам, а снаружи
+    // она нужна, чтобы узнать причину отказа заранее.
+    static ImageStatus check_size(int width, int height);
+
+    bool empty() const { return pixels_ == nullptr; }
     int width() const { return width_; }
     int height() const { return height_; }
     bool inside(int x, int y) const { return x >= 0 && y >= 0 && x < width_ && y < height_; }
@@ -66,29 +86,44 @@ public:
     // точки, которые ещё нужно проверить, лежат в собственном стеке.
     FillReport flood_fill(int x, int y, Color color);
 
-    // Преобразования «из другого изображения»: этот объект становится
-    // обрезанной, повёрнутой или масштабированной копией source. Источник
-    // и результат должны быть разными объектами: на месте повернуть
-    // изображение 300 на 200 нельзя — меняется форма. При ошибке этот
-    // объект не меняется.
-    ImageStatus crop_from(const Image& source, int x, int y, int width, int height);
-    ImageStatus rotate_from(const Image& source, int angle);
-    ImageStatus scale_from(const Image& source, int width, int height);
+    // Преобразования. Результат строится в новом объекте и перемещается
+    // на место этого. При ошибке изображение не меняется.
+    ImageStatus crop(int x, int y, int width, int height);
+    ImageStatus rotate(int angle);
+    ImageStatus scale(int width, int height);
 
-    // Чтение и запись PPM. При ошибке чтения содержимое объекта
-    // не определено, поэтому редактор читает во вспомогательное изображение
-    // и переносит его в рабочее только при успехе.
+    // Чтение и запись PPM. При ошибке чтения изображение не меняется.
     ImageStatus load(const std::string& path, PpmFormat& format);
     ImageStatus save(const std::string& path, PpmFormat format) const;
 
+    // Одна строка: номер объекта, размер, углы, самая тёмная и самая
+    // светлая точка. Нужна опытам demo.
+    void print_short() const;
+
+    // Сколько изображений владеют буфером прямо сейчас и печатать ли
+    // сообщения из конструкторов, деструктора и перемещений.
+    static int live_count() { return live_count_; }
+    static bool trace;
+
 private:
-    // Как разложены пиксели — внутреннее дело класса. Снаружи о смещении
-    // никто не знает, поэтому метод закрыт.
+    // Как разложены пиксели — внутреннее дело класса.
     int offset(int x, int y) const { return y * width_ + x; }
+    std::size_t count() const {
+        return static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
+    }
 
     ImageStatus read_pixels(std::istream& file, PpmFormat format, int maximum);
 
-    Color pixels_[MAX_SIDE * MAX_SIDE];   // при создании все чёрные: поля Color равны нулю
+    // Отдаёт этому объекту буфер и размеры other, оставляя other пустым.
+    void take_from(Image& other);
+    // Освобождает свой буфер и становится пустым.
+    void release();
+
     int width_ = 0;
     int height_ = 0;
+    Color* pixels_ = nullptr;   // width_ * height_ элементов из new[]; nullptr — пусто
+    int id_;                    // номер объекта — чтобы по сообщениям видеть, кто есть кто
+
+    static int live_count_;
+    static int next_id_;
 };

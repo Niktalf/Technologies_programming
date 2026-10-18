@@ -1,9 +1,13 @@
 #include "console.hpp"
 
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <utility>
 
 #include "parser.hpp"
 #include "sorted_pairs.hpp"
@@ -42,12 +46,17 @@ void print_bytes(const std::vector<std::uint8_t>& bytes) {
 
 } // namespace
 
-KvStatus Console::open(const std::string& first, const std::string& second) {
-    return session_.open(first, second);
-}
-
-void Console::close() {
-    session_.close();
+// session_ создаётся в списке инициализации. Если журнал не открылся,
+// исключение уходит из конструктора Console дальше, к main.
+Console::Console(const std::string& first, const std::string& second)
+    : session_(first, second) {
+    for (int i = 0; i < Session::STORES; ++i) {
+        Store& store = i == 0 ? session_.current() : session_.other();
+        if (store.recovered_broken() > 0) {
+            std::cout << "Journal " << session_.path(i)
+                      << " had a damaged tail - it was cut off, whole records are kept.\n";
+        }
+    }
 }
 
 void Console::print_help() {
@@ -69,6 +78,8 @@ void Console::print_help() {
               << "  script <file> [stop] - run commands from a file\n"
               << "  genscript <file> <n> - write a script of n put commands\n"
               << "  record <key> <val>   - build a journal record and check it\n"
+              << "  demo                 - an exception in the middle of work with a database\n"
+              << "  stress [n]           - open and close a database n times\n"
               << "  help                 - this list\n"
               << "  quit                 - exit\n";
 }
@@ -193,7 +204,7 @@ Console::Result Console::command_copy(const std::vector<std::string>& words) {
 
 Console::Result Console::command_close() {
     std::size_t count = session_.current().size();
-    session_.current().close();
+    session_.close_current();
     std::cout << "Store " << session_.number() << " closed, pairs freed: " << count
               << ". Journal " << session_.path(session_.number() - 1) << " stays on disk.\n";
     return Result::ok;
@@ -231,9 +242,10 @@ Console::Result Console::command_open(const std::vector<std::string>& words) {
         std::cout << "open needs a journal file name\n";
         return Result::error;
     }
-    KvStatus status = session_.open_current(words[1]);
-    if (status != KvStatus::ok) {
-        return report(status);
+    try {
+        session_.open_current(words[1]);
+    } catch (const KvError& error) {
+        return report(error.status());
     }
     const Store& store = session_.current();
     std::cout << "Journal opened " << words[1] << ": keys " << store.size()
@@ -364,6 +376,114 @@ Console::Result Console::command_record(const std::vector<std::string>& words) {
     return Result::ok;
 }
 
+// Опыт: исключение посреди работы с базой, повторное открытие, журнал,
+// который не открывается, и перемещение хранилища.
+Console::Result Console::command_demo() {
+    const std::string path = "demo.tmp.db";
+    std::remove(path.c_str());
+    Store::trace = true;
+    JournalFile::trace = true;
+
+    std::cout << "1. Store two keys and throw an exception:\n";
+    try {
+        Store store(path);
+        bool existed = false;
+        store.put("a", "1", existed);
+        store.put("b", "2", existed);
+        std::cout << "  keys stored, throwing an exception\n";
+        throw std::runtime_error("failure in the middle of work");
+    } catch (const std::exception& error) {
+        std::cout << "  caught: " << error.what() << '\n';
+    }
+    std::cout << "  The closing and flushed-and-closed messages appear before caught:\n"
+              << "  the destructors ran during stack unwinding.\n\n";
+
+    std::cout << "2. Reopen the database - the keys are there, every record went\n"
+              << "   to the journal before the exception:\n";
+    {
+        Store store(path);
+        SortedPairs sorted;
+        sorted.build(store);
+        sorted.print_all();
+    }
+
+    std::cout << "\n3. A journal that cannot be opened - no object at all:\n";
+    try {
+        Store store("/no/such/directory/x.db");
+        std::cout << "  this line is never printed\n";
+    } catch (const KvError& error) {
+        std::cout << "  caught: " << error.what() << '\n';
+    }
+
+    std::cout << "\n4. Moving a store: the journal changes owner and is closed once:\n";
+    {
+        Store first(path);
+        Store second = std::move(first);
+        std::cout << "  after the move: the source is "
+                  << (first.is_open() ? "open" : "closed") << ", open journals "
+                  << JournalFile::open_count() << '\n';
+    }
+
+    Store::trace = false;
+    JournalFile::trace = false;
+    std::remove(path.c_str());
+    return Result::ok;
+}
+
+namespace {
+
+// Сколько файлов открыто у процесса. В Linux это число файлов в каталоге
+// /proc/self/fd; в других системах каталога нет, и функция вернёт -1.
+long count_open_descriptors() {
+    std::error_code error;
+    std::filesystem::directory_iterator it("/proc/self/fd", error);
+    if (error) {
+        return -1;
+    }
+    long count = 0;
+    for (auto entry = std::filesystem::begin(it); entry != std::filesystem::end(it); ++entry) {
+        ++count;
+    }
+    return count;
+}
+
+} // namespace
+
+// Циклы открытия и закрытия базы: на каждом круге журнал открывает
+// конструктор и закрывает деструктор.
+Console::Result Console::command_stress(const std::vector<std::string>& words) {
+    long times = 100;
+    if (words.size() >= 2 && (!parse_long(words[1], times) || times <= 0)) {
+        std::cout << "stress needs a positive number, e.g. stress 100\n";
+        return Result::error;
+    }
+    const std::string path = "stress.tmp.db";
+    long before = count_open_descriptors();
+    int journals_before = JournalFile::open_count();   // журналы самой консоли уже открыты
+    std::remove(path.c_str());
+    for (long i = 0; i < times; ++i) {
+        Store store(path);   // открыли
+        bool existed = false;
+        store.put("cycle", std::to_string(i), existed);
+    }                        // закрыли — деструктором, на каждом круге
+    long after = count_open_descriptors();
+    {
+        Store store(path);
+        std::string value;
+        store.get("cycle", value);
+        std::cout << "Databases opened and closed: " << times << ", journal records: "
+                  << store.journal_records() << ", last value: " << value << '\n';
+    }
+    std::cout << "Open journals: before the cycles " << journals_before
+              << ", after " << JournalFile::open_count() << '\n';
+    if (before >= 0) {
+        std::cout << "Open files of the process: before the cycles " << before
+                  << ", after " << after << '\n';
+    }
+    std::remove(path.c_str());
+    return Result::ok;
+}
+
 // Команды, которым нужно открытое хранилище.
 Console::Result Console::execute_on_store(const std::vector<std::string>& words) {
     const std::string& name = words[0];
@@ -403,6 +523,16 @@ Console::Result Console::execute(const std::vector<std::string>& words) {
     if (words.empty()) {
         return Result::ok;
     }
+    // Сбой записи в журнал приходит исключением. Ловим его здесь, чтобы
+    // одна неудачная команда не завершала программу.
+    try {
+        return dispatch(words);
+    } catch (const KvError& error) {
+        return report(error.status());
+    }
+}
+
+Console::Result Console::dispatch(const std::vector<std::string>& words) {
     // Сначала команды, которым открытое хранилище не нужно.
     const std::string& name = words[0];
     if (name == "quit" || name == "exit") {
@@ -429,6 +559,12 @@ Console::Result Console::execute(const std::vector<std::string>& words) {
     }
     if (name == "record") {
         return command_record(words);
+    }
+    if (name == "demo") {
+        return command_demo();
+    }
+    if (name == "stress") {
+        return command_stress(words);
     }
     // Всё остальное работает с данными и требует открытого хранилища.
     if (!session_.current().is_open()) {

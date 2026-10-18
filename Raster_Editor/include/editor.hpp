@@ -11,11 +11,10 @@
 // получали её адрес первым параметром. Здесь обработчики — закрытые методы:
 // редактор у них есть всегда — это объект, через который они вызваны.
 //
-// Кроме рабочего изображения у редактора есть вспомогательное: в него
-// пишется результат поворота, масштаба, обрезки и чтения файла, и только
-// если операция удалась, оно копируется в рабочее. Так ошибка не портит
-// то, что уже открыто, — как в версии на C, где новое изображение
-// создавалось раньше, чем освобождалось старое.
+// Практика 10: изображение само владеет памятью, поэтому редактор маленький
+// и живёт обычной локальной переменной. Вспомогательное изображение
+// практики 9 больше не нужно: каждая операция строит результат в новом
+// объекте и перемещает его на место старого.
 class Editor {
 public:
     // Выполняет одну команду. words[0] — её название, регистр не важен.
@@ -25,7 +24,7 @@ public:
     void set_path(const std::string& path) { path_ = path; }
 
     // Есть ли изображение и записать его в файл, заданный при запуске.
-    bool loaded() const { return loaded_; }
+    bool loaded() const { return !image_.empty(); }
     ImageStatus save_to_path() const { return image_.save(path_, PpmFormat::text); }
     const std::string& path() const { return path_; }
 
@@ -35,8 +34,6 @@ private:
     bool require_image() const;
     // Делает так, чтобы в редакторе было изображение width x height.
     bool ensure_image(int width, int height);
-    // Переносит готовый результат из вспомогательного изображения в рабочее.
-    void take_result();
 
     void print_info() const;
     void command_size(const std::vector<std::string>& words);
@@ -52,9 +49,9 @@ private:
     void command_load(const std::vector<std::string>& words);
     void command_save(const std::vector<std::string>& words);
     static void command_colors();
+    static void command_demo();
+    static void command_stress(const std::vector<std::string>& words);
 
-    std::string path_;      // пустая строка — файл не задан
-    bool loaded_ = false;   // есть ли в редакторе изображение
-    Image image_;           // рабочее изображение
-    Image scratch_;         // вспомогательное: сюда пишется результат операции
+    std::string path_;   // пустая строка — файл не задан
+    Image image_;        // пустое, пока изображения нет
 };

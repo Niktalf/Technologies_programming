@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "map.hpp"
 
 // Поиск выхода: достижим ли он из заданной клетки. Рекурсивный обход,
@@ -19,10 +21,15 @@ public:
 
 private:
     void visit(const Map& map, int x, int y, int depth);
+    std::size_t cell(int x, int y) const { return static_cast<std::size_t>(y * width_ + x); }
 
-    // Пометки посещённых клеток — массив наибольшего размера, как и клетки
-    // карты на этой практике.
-    bool visited_[Map::MAX_HEIGHT][Map::MAX_WIDTH] = {};
+    // Пометки посещённых клеток ровно по размеру карты: visited_[y * width + x].
+    // На практике 9 это был массив наибольшего размера. Вектор выделяет
+    // память сам и сам освобождает её в своём деструкторе, поэтому классу
+    // деструктор писать не нужно: деструктор, созданный компилятором,
+    // вызовет деструкторы полей.
+    std::vector<char> visited_;
+    int width_ = 0;   // ширина карты, по которой размечен visited_
     int cells_ = 0;
     int depth_ = 0;
 };

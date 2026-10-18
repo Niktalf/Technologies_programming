@@ -1,7 +1,11 @@
 #include "image.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <iostream>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -123,6 +127,134 @@ struct Point {
 
 } // namespace
 
+bool Image::trace = false;
+int Image::live_count_ = 0;
+int Image::next_id_ = 1;
+
+ImageStatus Image::check_size(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return ImageStatus::bad_argument;
+    }
+    if (width > MAX_SIDE || height > MAX_SIDE) {
+        return ImageStatus::too_large;
+    }
+    return ImageStatus::ok;
+}
+
+Image::Image()
+    : id_(next_id_++) {
+}
+
+// Список инициализации: поля получают значения до входа в тело
+// конструктора, в порядке объявления в классе. pixels_ пока nullptr.
+Image::Image(int width, int height)
+    : width_(width), height_(height), id_(next_id_++) {
+    // Размеры проверяются до выделения: испорченное число не должно
+    // превратиться в запрос на гигабайты.
+    ImageStatus status = check_size(width, height);
+    if (status != ImageStatus::ok) {
+        throw std::invalid_argument(status_text(status));
+    }
+    // new[] для массива — значит, освобождать нужно delete[], а не delete.
+    // При нехватке памяти new возбуждает std::bad_alloc, а не возвращает NULL.
+    // Каждый Color при создании чёрный: его поля равны нулю.
+    pixels_ = new Color[count()];
+    ++live_count_;
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] created " << width_ << " x " << height_ << '\n';
+    }
+}
+
+Image::Image(const Image& other)
+    : width_(other.width_), height_(other.height_), id_(next_id_++) {
+    if (!other.empty()) {
+        pixels_ = new Color[count()];
+        std::copy(other.pixels_, other.pixels_ + count(), pixels_);
+        ++live_count_;
+    }
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] copy-constructed from #" << other.id_ << '\n';
+    }
+}
+
+Image& Image::operator=(const Image& other) {
+    // Присваивание самому себе: без этой проверки мы освободили бы буфер
+    // и потом копировали бы из уже освобождённой памяти.
+    if (this == &other) {
+        if (trace) {
+            std::cout << "  [Image #" << id_ << "] self-assignment - nothing to do\n";
+        }
+        return *this;
+    }
+    // Сначала новый буфер, потом освобождение старого. Если new возбудит
+    // исключение, объект останется прежним и целым.
+    Color* fresh = nullptr;
+    if (!other.empty()) {
+        fresh = new Color[other.count()];
+        std::copy(other.pixels_, other.pixels_ + other.count(), fresh);
+    }
+    release();
+    pixels_ = fresh;
+    width_ = other.width_;
+    height_ = other.height_;
+    if (pixels_ != nullptr) {
+        ++live_count_;
+    }
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] copy-assigned from #" << other.id_ << '\n';
+    }
+    return *this;   // ссылка на себя: можно писать a = b = c
+}
+
+void Image::take_from(Image& other) {
+    width_ = other.width_;
+    height_ = other.height_;
+    pixels_ = other.pixels_;
+    // Прежний владелец остаётся пустым: его деструктор ничего не освободит.
+    other.pixels_ = nullptr;
+    other.width_ = 0;
+    other.height_ = 0;
+}
+
+void Image::release() {
+    if (pixels_ != nullptr) {
+        --live_count_;
+    }
+    delete[] pixels_;   // парная форма к new[]; delete[] от nullptr ничего не делает
+    pixels_ = nullptr;
+    width_ = 0;
+    height_ = 0;
+}
+
+// Перемещающий конструктор: новый объект забирает буфер. Новой памяти
+// не выделяется, пиксели не копируются — переезжает один указатель.
+Image::Image(Image&& other) noexcept
+    : id_(next_id_++) {
+    take_from(other);
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] move-constructed from #" << other.id_ << '\n';
+    }
+}
+
+Image& Image::operator=(Image&& other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+    release();   // свой буфер больше не нужен
+    take_from(other);
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] move-assigned from #" << other.id_ << '\n';
+    }
+    return *this;
+}
+
+Image::~Image() {
+    if (trace) {
+        std::cout << "  [Image #" << id_ << "] destroyed" << (empty() ? " (empty)" : "") << '\n';
+    }
+    release();
+}
+
 const char* Image::status_text(ImageStatus status) {
     switch (status) {
     case ImageStatus::ok:
@@ -134,28 +266,13 @@ const char* Image::status_text(ImageStatus status) {
     case ImageStatus::corrupt:
         return "corrupted data: the file is cut off or a value is out of range";
     case ImageStatus::too_large:
-        return "too large: at most 1024 x 1024 in this version";
+        return "too large: at most 8192 x 8192";
     case ImageStatus::bad_argument:
         return "invalid argument";
     case ImageStatus::write_failed:
         return "write failed";
     }
     return "unknown error";
-}
-
-ImageStatus Image::reset(int width, int height) {
-    if (width <= 0 || height <= 0) {
-        return ImageStatus::bad_argument;
-    }
-    if (width > MAX_SIDE || height > MAX_SIDE) {
-        return ImageStatus::too_large;
-    }
-    width_ = width;
-    height_ = height;
-    for (int i = 0; i < width_ * height_; ++i) {
-        pixels_[i] = Color::from_rgb(0, 0, 0);
-    }
-    return ImageStatus::ok;
 }
 
 Color Image::pixel(int x, int y) const {
@@ -289,72 +406,6 @@ FillReport Image::flood_fill(int x, int y, Color color) {
     return report;
 }
 
-ImageStatus Image::crop_from(const Image& source, int x, int y, int width, int height) {
-    // Явный this: источник и результат должны быть разными объектами,
-    // иначе мы перезаписали бы пиксели, которые ещё не прочитаны.
-    if (this == &source) {
-        return ImageStatus::bad_argument;
-    }
-    // Сравнение через вычитание: x + width могло бы переполнить int.
-    if (x < 0 || y < 0 || width <= 0 || height <= 0
-        || x > source.width_ - width || y > source.height_ - height) {
-        return ImageStatus::bad_argument;
-    }
-    width_ = width;
-    height_ = height;
-    for (int row = 0; row < height; ++row) {
-        for (int col = 0; col < width; ++col) {
-            pixels_[offset(col, row)] = source.pixel(x + col, y + row);
-        }
-    }
-    return ImageStatus::ok;
-}
-
-ImageStatus Image::rotate_from(const Image& source, int angle) {
-    if (this == &source || angle % 90 != 0) {
-        return ImageStatus::bad_argument;
-    }
-    // Число четвертей оборота от 0 до 3: -90 — это то же, что 270.
-    int turns = ((angle / 90) % 4 + 4) % 4;
-    width_ = turns % 2 == 0 ? source.width_ : source.height_;
-    height_ = turns % 2 == 0 ? source.height_ : source.width_;
-    for (int y = 0; y < source.height_; ++y) {
-        for (int x = 0; x < source.width_; ++x) {
-            Color color = source.pixel(x, y);
-            if (turns == 0) {
-                set_pixel(x, y, color);
-            } else if (turns == 1) {
-                set_pixel(source.height_ - 1 - y, x, color);   // 90 по часовой
-            } else if (turns == 2) {
-                set_pixel(source.width_ - 1 - x, source.height_ - 1 - y, color);
-            } else {
-                set_pixel(y, source.width_ - 1 - x, color);    // 90 против часовой
-            }
-        }
-    }
-    return ImageStatus::ok;
-}
-
-ImageStatus Image::scale_from(const Image& source, int width, int height) {
-    if (this == &source || source.empty() || width <= 0 || height <= 0) {
-        return ImageStatus::bad_argument;
-    }
-    if (width > MAX_SIDE || height > MAX_SIDE) {
-        return ImageStatus::too_large;
-    }
-    width_ = width;
-    height_ = height;
-    // Ближайший сосед: для каждой точки нового изображения берём ближайшую
-    // точку старого. Умножение до деления.
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            pixels_[offset(x, y)] =
-                source.pixel(x * source.width_ / width, y * source.height_ / height);
-        }
-    }
-    return ImageStatus::ok;
-}
-
 ImageStatus Image::read_pixels(std::istream& file, PpmFormat format, int maximum) {
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
@@ -370,29 +421,6 @@ ImageStatus Image::read_pixels(std::istream& file, PpmFormat format, int maximum
         }
     }
     return ImageStatus::ok;
-}
-
-ImageStatus Image::load(const std::string& path, PpmFormat& format) {
-    // Двоичный режим всегда: для P6 он обязателен, потому что в текстовом
-    // некоторые системы портят байты, совпадающие с кодом перевода строки.
-    // Для P3 он безвреден.
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return ImageStatus::cannot_open;
-    }
-    int width = 0;
-    int height = 0;
-    int maximum = 0;
-    ImageStatus status = read_header(file, format, width, height, maximum);
-    if (status == ImageStatus::ok) {
-        status = reset(width, height);
-    }
-    if (status == ImageStatus::ok) {
-        status = read_pixels(file, format, maximum);
-    }
-    // Файл закрывается сам, когда переменная file выходит из области
-    // видимости. Как это устроено, разберём на практике 10.
-    return status;
 }
 
 ImageStatus Image::save(const std::string& path, PpmFormat format) const {
@@ -428,4 +456,113 @@ ImageStatus Image::save(const std::string& path, PpmFormat format) const {
     // именно тогда. Поэтому файл закрывается явно и проверяется после.
     file.close();
     return file ? ImageStatus::ok : ImageStatus::write_failed;
+}
+
+ImageStatus Image::crop(int x, int y, int width, int height) {
+    // Сравнение через вычитание: x + width могло бы переполнить int.
+    if (empty() || x < 0 || y < 0 || width <= 0 || height <= 0
+        || x > width_ - width || y > height_ - height) {
+        return ImageStatus::bad_argument;
+    }
+    Image result(width, height);
+    for (int row = 0; row < height; ++row) {
+        for (int col = 0; col < width; ++col) {
+            result.set_pixel(col, row, pixel(x + col, y + row));
+        }
+    }
+    // Готовый результат перемещается на место этого изображения: старый
+    // буфер освобождается, новый переходит к *this без копирования.
+    *this = std::move(result);
+    return ImageStatus::ok;
+}
+
+ImageStatus Image::rotate(int angle) {
+    if (empty() || angle % 90 != 0) {
+        return ImageStatus::bad_argument;
+    }
+    // Число четвертей оборота от 0 до 3: -90 — это то же, что 270.
+    int turns = ((angle / 90) % 4 + 4) % 4;
+    if (turns == 0) {
+        return ImageStatus::ok;
+    }
+    Image result(turns == 2 ? width_ : height_, turns == 2 ? height_ : width_);
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            Color color = pixel(x, y);
+            if (turns == 1) {
+                result.set_pixel(height_ - 1 - y, x, color);   // 90 по часовой
+            } else if (turns == 2) {
+                result.set_pixel(width_ - 1 - x, height_ - 1 - y, color);
+            } else {
+                result.set_pixel(y, width_ - 1 - x, color);    // 90 против часовой
+            }
+        }
+    }
+    *this = std::move(result);
+    return ImageStatus::ok;
+}
+
+ImageStatus Image::scale(int width, int height) {
+    if (empty()) {
+        return ImageStatus::bad_argument;
+    }
+    ImageStatus status = check_size(width, height);
+    if (status != ImageStatus::ok) {
+        return status;
+    }
+    Image result(width, height);
+    // Ближайший сосед: для каждой точки нового изображения берём ближайшую
+    // точку старого. Умножение до деления.
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            result.set_pixel(x, y, pixel(x * width_ / width, y * height_ / height));
+        }
+    }
+    *this = std::move(result);
+    return ImageStatus::ok;
+}
+
+ImageStatus Image::load(const std::string& path, PpmFormat& format) {
+    // Двоичный режим всегда: для P6 он обязателен, потому что в текстовом
+    // некоторые системы портят байты, совпадающие с кодом перевода строки.
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return ImageStatus::cannot_open;
+    }
+    int width = 0;
+    int height = 0;
+    int maximum = 0;
+    PpmFormat read_format = PpmFormat::text;
+    ImageStatus status = read_header(file, read_format, width, height, maximum);
+    if (status != ImageStatus::ok) {
+        return status;
+    }
+    // Пиксели читаются во временное изображение. Если файл оборван,
+    // временное разрушится само при выходе из метода, а это — не изменится.
+    Image loaded(width, height);
+    status = loaded.read_pixels(file, read_format, maximum);
+    if (status != ImageStatus::ok) {
+        return status;
+    }
+    *this = std::move(loaded);
+    format = read_format;
+    return ImageStatus::ok;
+}   // file закрывается здесь сам: деструктор std::ifstream
+
+void Image::print_short() const {
+    std::cout << "  #" << id_ << ": " << width_ << " x " << height_;
+    if (empty()) {
+        std::cout << ", empty\n";
+        return;
+    }
+    int darkest = 0;
+    int brightest = 0;
+    min_max(darkest, brightest);
+    Color first = pixel(0, 0);
+    Color last = pixel(width_ - 1, height_ - 1);
+    std::cout << ", top left " << static_cast<int>(first.red()) << ' '
+              << static_cast<int>(first.green()) << ' ' << static_cast<int>(first.blue())
+              << ", bottom right " << static_cast<int>(last.red()) << ' '
+              << static_cast<int>(last.green()) << ' ' << static_cast<int>(last.blue())
+              << ", brightness " << darkest << "-" << brightest << '\n';
 }

@@ -2,12 +2,10 @@
 
 #include <cstdlib>
 
-bool LevelGenerator::generate(Map& map, int width, int height, unsigned int seed) {
+bool LevelGenerator::generate(Map& map, unsigned int seed) {
     bool built = false;
     for (int attempt = 0; attempt < ATTEMPTS && !built; ++attempt) {
-        if (!map.reset(width, height)) {
-            return false;   // неверный размер: другое зерно не поможет
-        }
+        map.clear();   // каждая попытка — с чистой комнаты
         fill(map, seed + static_cast<unsigned int>(attempt));
         built = search_.run(map, 1, 1);
     }
