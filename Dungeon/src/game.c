@@ -1,17 +1,19 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "command.h"
 #include "game.h"
 #include "hero.h"
 #include "map.h"
 #include "reach.h"
 
-/* Практика 5: глобальных переменных больше нет. Карта и характеристики
+/* Практика 6: строка читается целиком и разбирается на слова вручную.
+   Команды понимают сокращения: go north, north и n — одно и то же.
+
+   Практика 5: глобальных переменных больше нет. Карта и характеристики
    героя — локальные переменные game_run, и функции получают их адреса.
    По списку параметров видно, что функция может изменить: всё, что
    передано указателем без const, и только это. */
-
-#define COMMAND_SIZE 16
 
 /* Счётчик вызовов команды addr. Переменная вне функций живёт всё время
    работы программы. Нужна, чтобы показать, где лежат такие переменные. */
@@ -23,17 +25,12 @@ static const char *const STATE_NAMES[STATE_COUNT] = {
 };
 
 static void print_commands(void) {
-    printf("Commands: north, south, east, west - step; look - map;\n");
-    printf("         check - is the exit reachable; cell - what is underfoot;\n");
-    printf("         addr - addresses in memory; status, hit <N>,\n");
-    printf("         on/off/toggle <state>, stacktest <N>, quit\n");
-}
-
-static void skip_rest_of_line(void) {
-    int c = getchar();
-    while (c != '\n' && c != EOF) {
-        c = getchar();
-    }
+    printf("Commands (short form in parentheses):\n");
+    printf("  go <where>, north (n), south (s), east (e), west (w) - step\n");
+    printf("  look (l) - map; check (c) - is the exit reachable; cell - what is underfoot\n");
+    printf("  status (st), inventory (i), use <number> (u) - use an item\n");
+    printf("  hit <N>, on/off/toggle <state>, addr, stacktest <N>\n");
+    printf("  help (h), quit (q)\n");
 }
 
 /* Получает значения, а не адреса: функция только читает. */
@@ -52,17 +49,19 @@ static void print_status(int hp, int hp_max, unsigned char attack, unsigned int 
     printf("%s\n", any ? "" : " none");
 }
 
+/* Номер направления по слову или -1. Регистр не важен: слово уже
+   переведено в нижний регистр. */
 static int direction_number(const char *word) {
-    if (strcmp(word, "north") == 0) {
+    if (command_is(word, "north", "n")) {
         return DIRECTION_NORTH;
     }
-    if (strcmp(word, "south") == 0) {
+    if (command_is(word, "south", "s")) {
         return DIRECTION_SOUTH;
     }
-    if (strcmp(word, "east") == 0) {
+    if (command_is(word, "east", "e")) {
         return DIRECTION_EAST;
     }
-    if (strcmp(word, "west") == 0) {
+    if (command_is(word, "west", "w")) {
         return DIRECTION_WEST;
     }
     return -1;
@@ -78,18 +77,18 @@ static int state_number(const char *word) {
     return -1;
 }
 
-/* Читает название состояния и меняет его бит по адресу states. */
-static void change_state(const char *command, unsigned int *states) {
+/* Меняет бит состояния по адресу states. Название состояния — слово word. */
+static void change_state(const char *command, const char *word, unsigned int *states) {
     if (states == NULL) {
         return;
     }
-    char word[COMMAND_SIZE];
-    int number = -1;
-    if (scanf("%15s", word) == 1) {
-        number = state_number(word);
+    if (word == NULL) {
+        printf("Which state? Example: %s poisoned\n", command);
+        return;
     }
+    int number = state_number(word);
     if (number < 0) {
-        printf("No such state. Known: poisoned, blinded, invisible,\n");
+        printf("No state %s. Known: poisoned, blinded, invisible,\n", word);
         printf("petrified, burning, asleep\n");
         return;
     }
@@ -102,6 +101,26 @@ static void change_state(const char *command, unsigned int *states) {
         *states = *states ^ mask;
     }
     printf("Hero is %s: %s\n", STATE_NAMES[number], (*states & mask) != 0 ? "yes" : "no");
+}
+
+/* Число из слова с понятным сообщением при ошибке. Возвращает 1 при успехе. */
+static int number_argument(const char *word, const char *example, int *out) {
+    int code = command_parse_number(word, out);
+    if (code != NUMBER_OK) {
+        printf("%s. Example: %s\n", command_number_error(code), example);
+        return 0;
+    }
+    return 1;
+}
+
+static void print_inventory(const int items[], int item_count) {
+    if (item_count == 0) {
+        printf("The bag is empty.\n");
+        return;
+    }
+    for (int i = 0; i < item_count; ++i) {
+        printf("  %d. %s\n", i + 1, hero_item_name(items[i]));
+    }
 }
 
 /* Шаг героя: координаты, золото и счётчик ходов меняются по адресам. */
@@ -140,13 +159,10 @@ static void command_check(char map[][MAP_COLS], int x, int y) {
     printf("Cells visited: %d, recursion depth: %d\n", cells, depth);
 }
 
-/* Читает урон и наносит его. Возвращает 0, если герой погиб. */
-static int command_hit(int *hp, int hp_max) {
+/* Наносит урон из аргумента. Возвращает 0, если герой погиб. */
+static int command_hit(const char *argument, int *hp, int hp_max) {
     int damage = 0;
-    int ok = scanf("%9d", &damage) == 1 && damage > 0;
-    skip_rest_of_line();
-    if (!ok) {
-        printf("hit needs a positive number, e.g. hit 7\n");
+    if (!number_argument(argument, "hit 7", &damage)) {
         return 1;
     }
     hero_damage(hp, damage);
@@ -158,17 +174,53 @@ static int command_hit(int *hp, int hp_max) {
     return 1;
 }
 
-static void command_stacktest(void) {
+static void command_use(const char *argument, int items[], int *item_count,
+                        int *hp, int hp_max, unsigned int *states) {
+    int number = 0;
+    if (!number_argument(argument, "use 1", &number)) {
+        return;
+    }
+    if (number < 1 || number > *item_count) {
+        printf("No item number %d in the bag. Items: %d\n", number, *item_count);
+        return;
+    }
+    printf("The hero uses: %s\n", hero_item_name(items[number - 1]));
+    hero_use_item(items, item_count, number, hp, hp_max, states);
+    printf("Health: %d / %d\n", *hp, hp_max);
+}
+
+static void command_stacktest(const char *argument) {
     int size = 0;
-    int ok = scanf("%9d", &size) == 1 && size > 0 && size <= REACH_FIELD_MAX;
-    skip_rest_of_line();
-    if (!ok) {
-        printf("Specify the field side from 1 to %d\n", REACH_FIELD_MAX);
+    if (!number_argument(argument, "stacktest 300", &size)) {
+        return;
+    }
+    if (size < 1 || size > REACH_FIELD_MAX) {
+        printf("The field side is from 1 to %d\n", REACH_FIELD_MAX);
         return;
     }
     printf("Walking an open field %d x %d...\n", size, size);
     fflush(stdout); /* при падении текст из буфера иначе пропал бы */
     printf("Recursion depth: %d\n", reach_open_field(size));
+}
+
+/* Направление шага: из самого слова (north, n) или из второго слова
+   после go. Возвращает -1, если команда — не шаг; -2, если это go
+   с неверным направлением (сообщение уже напечатано). */
+static int step_direction(char *words[], int count) {
+    if (!command_is(words[0], "go", NULL)) {
+        return direction_number(words[0]);
+    }
+    if (count < 2) {
+        printf("Go where? Example: go north\n");
+        return -2;
+    }
+    command_to_lower(words[1]);
+    int direction = direction_number(words[1]);
+    if (direction < 0) {
+        printf("Unknown direction: %s. Known: north, south, east, west.\n", words[1]);
+        return -2;
+    }
+    return direction;
 }
 
 /* Вспомогательная функция для addr: её локальная переменная лежит
@@ -205,38 +257,52 @@ static void print_addresses(char map[][MAP_COLS], int *hp, int *turns) {
     printf("addr calls: %d\n", calls_here);
 }
 
-/* Выполняет одну команду. Возвращает 0, если игра закончилась.
-   Параметров много — так выглядит код, в котором связанные данные
-   ещё не собраны в структуру. Так оставлено намеренно: на практике 8
-   они станут одной структурой. */
-static int handle_command(const char *command, char map[][MAP_COLS],
+/* Выполняет одну команду, разобранную на слова. Возвращает 0, если игра
+   закончилась. Параметров уже четырнадцать: связанные данные героя
+   по-прежнему лежат отдельными переменными. Так оставлено намеренно:
+   на практике 8 они станут одной структурой. */
+static int handle_command(char *words[], int count, char map[][MAP_COLS],
                           int *x, int *y, int *hp, int hp_max, unsigned char attack,
-                          unsigned int *gold, int depth, unsigned int *states, int *turns) {
-    int direction = direction_number(command);
+                          unsigned int *gold, int depth, unsigned int *states, int *turns,
+                          int items[], int *item_count) {
+    const char *name = words[0];
+    const char *argument = count > 1 ? words[1] : NULL;
+    int direction = step_direction(words, count);
     if (direction >= 0) {
         command_move(map, direction, x, y, gold, turns);
-    } else if (strcmp(command, "look") == 0) {
+    } else if (direction == -2) {
+        /* go с неверным направлением: сообщение уже напечатано */
+    } else if (command_is(name, "look", "l")) {
         map_draw(map, *x, *y);
-    } else if (strcmp(command, "cell") == 0) {
+    } else if (command_is(name, "cell", NULL)) {
         describe_cell(map, *x, *y);
-    } else if (strcmp(command, "check") == 0) {
+    } else if (command_is(name, "check", "c")) {
         command_check(map, *x, *y);
-    } else if (strcmp(command, "status") == 0) {
+    } else if (command_is(name, "status", "st")) {
         print_status(*hp, hp_max, attack, *gold, depth, *states);
-    } else if (strcmp(command, "hit") == 0) {
-        return command_hit(hp, hp_max);
-    } else if (strcmp(command, "on") == 0 || strcmp(command, "off") == 0
-               || strcmp(command, "toggle") == 0) {
-        change_state(command, states);
-    } else if (strcmp(command, "addr") == 0) {
+    } else if (command_is(name, "inventory", "i")) {
+        print_inventory(items, *item_count);
+    } else if (command_is(name, "use", "u")) {
+        command_use(argument, items, item_count, hp, hp_max, states);
+    } else if (command_is(name, "hit", NULL)) {
+        return command_hit(argument, hp, hp_max);
+    } else if (command_is(name, "on", NULL) || command_is(name, "off", NULL)
+               || command_is(name, "toggle", NULL)) {
+        /* Название состояния сравнивается со словами в нижнем регистре. */
+        if (count > 1) {
+            command_to_lower(words[1]);
+        }
+        change_state(name, argument, states);
+    } else if (command_is(name, "addr", NULL)) {
         print_addresses(map, hp, turns);
-    } else if (strcmp(command, "stacktest") == 0) {
-        command_stacktest();
-    } else if (strcmp(command, "quit") == 0) {
+    } else if (command_is(name, "stacktest", NULL)) {
+        command_stacktest(argument);
+    } else if (command_is(name, "help", "h")) {
+        print_commands();
+    } else if (command_is(name, "quit", "q")) {
         return 0;
     } else {
-        printf("Unknown command: %s\n", command);
-        print_commands();
+        printf("Unknown command: %s. Type help.\n", name);
     }
     return 1;
 }
@@ -252,6 +318,9 @@ void game_run(void) {
     unsigned int gold = 0;
     int depth = 1;
     unsigned int states = 0;
+    /* Сумка: в начале четыре предмета, остальные места пустые. */
+    int items[INVENTORY_SIZE] = { ITEM_POTION, ITEM_ANTIDOTE, ITEM_TORCH, ITEM_POTION };
+    int item_count = 4;
 
     /* Имя массива передаётся без &: оно и так превращается в адрес. */
     map_init(map);
@@ -266,12 +335,23 @@ void game_run(void) {
         printf("\nTurn %d > ", turns);
         fflush(stdout);
 
-        char command[COMMAND_SIZE];
-        if (scanf("%15s", command) == 1) {
-            running = handle_command(command, map, &x, &y, &hp, hp_max, attack,
-                                     &gold, depth, &states, &turns);
-        } else {
+        char line[LINE_SIZE];
+        int status = command_read_line(line, (int)sizeof line);
+        if (status == READ_END) {
             running = 0;
+        } else if (status == READ_TOO_LONG) {
+            printf("Line too long: at most %d characters.\n", LINE_SIZE - 2);
+        } else {
+            char *words[WORDS_MAX];
+            int count = command_split(line, words, WORDS_MAX);
+            if (count > 0) {
+                /* В нижний регистр — только название команды: NORTH и north
+                   одно и то же. Аргументы-слова переводятся там, где их
+                   сравнивают с ключевыми словами. */
+                command_to_lower(words[0]);
+                running = handle_command(words, count, map, &x, &y, &hp, hp_max, attack,
+                                         &gold, depth, &states, &turns, items, &item_count);
+            }
         }
     }
     printf("\nGame over. Turns made: %d\n", turns);

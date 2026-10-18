@@ -45,3 +45,46 @@ int hero_pick_gold(char map[][MAP_COLS], int x, int y, unsigned int *gold) {
     map_set(map, x, y, TILE_FLOOR);
     return 1;
 }
+
+const char *hero_item_name(int item) {
+    switch (item) {
+    case ITEM_POTION:
+        return "healing potion";
+    case ITEM_ANTIDOTE:
+        return "antidote";
+    case ITEM_TORCH:
+        return "torch";
+    default:
+        return "unknown item";
+    }
+}
+
+int hero_use_item(int items[], int *item_count, int number,
+                  int *hp, int hp_max, unsigned int *states) {
+    if (items == NULL || item_count == NULL || hp == NULL || states == NULL) {
+        return 0;
+    }
+    if (number < 1 || number > *item_count) {
+        return 0;
+    }
+    int index = number - 1;
+    int item = items[index];
+    if (item == ITEM_POTION) {
+        *hp = *hp + POTION_HEAL;
+        if (*hp > hp_max) {
+            *hp = hp_max;
+        }
+    } else if (item == ITEM_ANTIDOTE) {
+        *states = *states & ~STATE_POISONED;
+    } else if (item == ITEM_TORCH) {
+        *states = *states & ~STATE_BLINDED;
+    }
+
+    /* Предмет израсходован: хвост сумки сдвигается на его место,
+       чтобы порядок остальных предметов не изменился. */
+    for (int i = index; i < *item_count - 1; ++i) {
+        items[i] = items[i + 1];
+    }
+    --*item_count;
+    return 1;
+}

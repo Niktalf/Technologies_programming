@@ -8,6 +8,7 @@
 #include "level.h"
 #include "shell.h"
 #include "sort.h"
+#include "text.h"
 #include "view.h"
 #include "stats.h"
 #include "timestamp.h"
@@ -30,6 +31,9 @@ static void print_help(void) {
     printf("  span                       - the earliest and the latest time\n");
     printf("  cost                       - compare sorting pointers and records\n");
     printf("  sort                       - sort the records themselves by time\n");
+    printf("  grep <word>                - records whose text contains the word\n");
+    printf("  module <name>              - records of one module\n");
+    printf("  between <date> <time> <date> <time> - records in the interval\n");
     printf("  since <date> <time>        - records from the moment on,\n");
     printf("                               e.g. since 2026-03-15 12:00:00\n");
     printf("  level <levels...>          - set the filter, e.g. level error fatal\n");
@@ -396,6 +400,98 @@ static void command_cost(const LogFile *log) {
     printf("Sorting the records:  %.4f s\n", by_records);
 }
 
+/* Условие выборки: функция получает запись и данные условия (образец,
+   имя модуля, границы интервала) и отвечает, подходит ли запись. */
+typedef int (*Match)(const LogRecord *record, const void *condition);
+
+/* Печатает первые LOGFILE_SHOW записей, которые проходят фильтр уровней
+   и условие match, и сообщает, сколько их всего. Все выборки учитывают
+   фильтр, заданный командой level: именно для этого он заводился
+   на практике 2. Один цикл на три команды — вместо трёх одинаковых. */
+static void print_matching(const LogFile *log, LevelMask mask, Match match,
+                           const void *condition) {
+    long found = 0;
+    for (long i = 0; i < log->count; ++i) {
+        const LogRecord *r = &log->records[i];
+        if (level_mask_has(mask, r->level) && match(r, condition)) {
+            if (found < LOGFILE_SHOW) {
+                logfile_print_record(r);
+            }
+            ++found;
+        }
+    }
+    if (found == 0) {
+        printf("Nothing found.\n");
+    } else if (found > LOGFILE_SHOW) {
+        printf("Records found: %ld, showing the first %d.\n", found, LOGFILE_SHOW);
+    } else {
+        printf("Records found: %ld.\n", found);
+    }
+}
+
+static int text_contains(const LogRecord *record, const void *condition) {
+    return text_find_ignore_case(record->text, condition) >= 0;
+}
+
+static int module_is(const LogRecord *record, const void *condition) {
+    return text_same_word(record->module, condition);
+}
+
+/* Границы интервала, обе включительно. */
+typedef struct {
+    Timestamp from;
+    Timestamp to;
+} Interval;
+
+static int time_inside(const LogRecord *record, const void *condition) {
+    const Interval *interval = condition;
+    return record->time >= interval->from && record->time <= interval->to;
+}
+
+static void command_grep(const LogFile *log, char *words[], int count, LevelMask mask) {
+    if (!require_log(log)) {
+        return;
+    }
+    if (count < 2) {
+        printf("Search for what? Example: grep timeout\n");
+        return;
+    }
+    print_matching(log, mask, text_contains, words[1]);
+}
+
+static void command_module(const LogFile *log, char *words[], int count, LevelMask mask) {
+    if (!require_log(log)) {
+        return;
+    }
+    if (count < 2) {
+        printf("Which module? Example: module net\n");
+        return;
+    }
+    print_matching(log, mask, module_is, words[1]);
+}
+
+static void command_between(const LogFile *log, char *words[], int count, LevelMask mask) {
+    if (!require_log(log)) {
+        return;
+    }
+    if (count < 5) {
+        printf("Usage: between <YYYY-MM-DD> <hh:mm:ss> <YYYY-MM-DD> <hh:mm:ss>\n");
+        return;
+    }
+    Interval interval;
+    interval.from = parse_moment(words[1], words[2]);
+    interval.to = parse_moment(words[3], words[4]);
+    if (interval.from == TIMESTAMP_INVALID || interval.to == TIMESTAMP_INVALID) {
+        printf("Cannot parse the date and time\n");
+        return;
+    }
+    if (interval.from > interval.to) {
+        printf("The interval starts after it ends: no records.\n");
+        return;
+    }
+    print_matching(log, mask, time_inside, &interval);
+}
+
 void shell_run(LogFile *log) {
     if (log->loaded) {
         print_load_report(log);
@@ -452,6 +548,12 @@ void shell_run(LogFile *log) {
             command_sort(log);
         } else if (strcmp(name, "since") == 0) {
             command_since(log, words, count);
+        } else if (strcmp(name, "grep") == 0) {
+            command_grep(log, words, count, mask);
+        } else if (strcmp(name, "module") == 0) {
+            command_module(log, words, count, mask);
+        } else if (strcmp(name, "between") == 0) {
+            command_between(log, words, count, mask);
         } else if (strcmp(name, "level") == 0) {
             mask = parse_level_arguments(mask, words, count);
             level_mask_print(mask);

@@ -1,22 +1,30 @@
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include "cli.h"
+#include "parser.h"
 #include "range.h"
 #include "record.h"
+#include "script.h"
 
 #define CLI_LINE_MAX 256
-#define CLI_ARGS_MAX 8
 
 /* Все ответы на команды, включая сообщения об ошибках, идут в обычный вывод:
-   они часть диалога и должны стоять в нём по порядку, сразу после приглашения. */
+   они часть диалога и должны стоять в нём по порядку, сразу после приглашения.
+   При выполнении скрипта это особенно важно: у двух потоков разная
+   буферизация, и сообщения перемешались бы не в том порядке.
+
+   Каждая команда возвращает CLI_OK или CLI_ERROR. Ошибка — это команда,
+   которая не выполнилась: нет аргумента, неверный аргумент, не хватило
+   памяти. «Ключ не найден» — это ответ, а не ошибка. */
 
 void cli_print_help(void) {
     printf("Available commands:\n");
     printf("  put <key> <value>  - store a pair\n");
+    printf("      a value with spaces goes in quotes: put name \"two words\"\n");
+    printf("      a quote inside a value is written as \\\"\n");
     printf("  get <key>          - get the value\n");
     printf("  del <key>          - delete the pair\n");
     printf("  list               - list all pairs\n");
@@ -30,6 +38,8 @@ void cli_print_help(void) {
     printf("  which              - which store is selected\n");
     printf("  copy <key>         - copy the pair to the other store\n");
     printf("  sizes              - why the store is passed by address\n");
+    printf("  script <file> [stop] - run commands from a file\n");
+    printf("  genscript <file> <n> - write a script of n put commands\n");
     printf("  help               - this list\n");
     printf("  quit               - exit\n");
 }
@@ -38,45 +48,48 @@ static void report(StoreStatus status) {
     printf("Error: %s\n", store_status_text(status));
 }
 
-static void command_put(Store *store, int argc, char *argv[]) {
+static int command_put(Store *store, int argc, char *argv[]) {
     if (argc < 3) {
         printf("put needs a key and a value\n");
-        return;
+        return CLI_ERROR;
     }
     int was_present = 0;
     StoreStatus status = store_put(store, argv[1], argv[2], &was_present);
     if (status != STORE_OK) {
         report(status);
-        return;
+        return CLI_ERROR;
     }
     printf(was_present ? "updated\n" : "added\n");
+    return CLI_OK;
 }
 
-static void command_get(const Store *store, int argc, char *argv[]) {
+static int command_get(const Store *store, int argc, char *argv[]) {
     if (argc < 2) {
         printf("get needs a key\n");
-        return;
+        return CLI_ERROR;
     }
     const char *value = NULL;
     StoreStatus status = store_get(store, argv[1], &value);
     if (status != STORE_OK) {
         report(status);
-        return;
+        return status == STORE_ERR_NOT_FOUND ? CLI_OK : CLI_ERROR;
     }
     printf("%s\n", value);
+    return CLI_OK;
 }
 
-static void command_del(Store *store, int argc, char *argv[]) {
+static int command_del(Store *store, int argc, char *argv[]) {
     if (argc < 2) {
         printf("del needs a key\n");
-        return;
+        return CLI_ERROR;
     }
     StoreStatus status = store_remove(store, argv[1]);
     if (status != STORE_OK) {
         report(status);
-        return;
+        return status == STORE_ERR_NOT_FOUND ? CLI_OK : CLI_ERROR;
     }
     printf("deleted\n");
+    return CLI_OK;
 }
 
 static void print_pair(const char *key, const char *value, void *context) {
@@ -84,42 +97,45 @@ static void print_pair(const char *key, const char *value, void *context) {
     printf("%s = %s\n", key, value);
 }
 
-static void command_list(const Store *store) {
+static int command_list(const Store *store) {
     if (store_count(store) == 0) {
         printf("The store is empty.\n");
-        return;
+        return CLI_OK;
     }
     /* Порядок — порядок ячеек таблицы, то есть произвольный.
-       Упорядоченный вывод появится на практике 4. */
+       Упорядоченный вывод — команда sorted. */
     store_for_each(store, print_pair, NULL);
+    return CLI_OK;
 }
 
-static void command_sorted(const Store *store) {
+static int command_sorted(const Store *store) {
     int depth = 0;
     int found = range_all(store, print_pair, NULL, &depth);
     if (found < 0) {
         printf("Not enough memory for sorting\n");
-        return;
+        return CLI_ERROR;
     }
     printf("Pairs total: %d, sort recursion depth: %d\n", found, depth);
+    return CLI_OK;
 }
 
-static void command_range(const Store *store, int argc, char *argv[]) {
+static int command_range(const Store *store, int argc, char *argv[]) {
     if (argc < 3) {
         printf("range needs two bounds\n");
-        return;
+        return CLI_ERROR;
     }
     if (strcmp(argv[1], argv[2]) > 0) {
         printf("The lower bound is greater than the upper one: the range is empty.\n");
-        return;
+        return CLI_OK;
     }
     int depth = 0;
     int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
     if (found < 0) {
         printf("Not enough memory for sorting\n");
-        return;
+        return CLI_ERROR;
     }
     printf("Pairs found: %d, sort recursion depth: %d\n", found, depth);
+    return CLI_OK;
 }
 
 static void print_stats(const Store *store) {
@@ -169,16 +185,16 @@ static Store *new_scratch_store(void) {
 }
 
 /* Кладёт n ключей и ищет каждый двумя способами. */
-static void command_bench(int argc, char *argv[]) {
+static int command_bench(int argc, char *argv[]) {
     const long limit = STORE_CAPACITY * 9 / 10;
     long n = argc >= 2 ? strtol(argv[1], NULL, 10) : 10000;
     if (n <= 0 || n > limit) {
         printf("The number of keys must be from 1 to %ld\n", limit);
-        return;
+        return CLI_ERROR;
     }
     Store *bench = new_scratch_store();
     if (bench == NULL) {
-        return;
+        return CLI_ERROR;
     }
     for (long i = 0; i < n; ++i) {
         char key[STORE_KEY_MAX];
@@ -199,11 +215,12 @@ static void command_bench(int argc, char *argv[]) {
     }
     print_stats(bench);
     free(bench);
+    return CLI_OK;
 }
 
 /* Подбирает два ключа с одной домашней ячейкой, кладёт оба, удаляет первый
    и ищет второй. Если удалённую ячейку пометить пустой, второй не найдётся. */
-static void command_collide(void) {
+static int command_collide(void) {
     const char *first = "a0";
     int home = store_home(first);
 
@@ -216,12 +233,12 @@ static void command_collide(void) {
     }
     if (!found) {
         printf("Could not find a collision.\n");
-        return;
+        return CLI_OK;
     }
 
     Store *scratch = new_scratch_store();
     if (scratch == NULL) {
-        return;
+        return CLI_ERROR;
     }
     store_put(scratch, first, "first", NULL);
     store_put(scratch, second, "second", NULL);
@@ -237,6 +254,7 @@ static void command_collide(void) {
         printf("Key %s is lost: the deleted cell broke the probe chain.\n", second);
     }
     free(scratch);
+    return CLI_OK;
 }
 
 /* Печатает байты буфера шестнадцатеричными числами. */
@@ -250,10 +268,10 @@ static void print_bytes(const uint8_t *buffer, size_t size) {
 
 /* Практика 2: сборка записи журнала, разбор и обнаружение порчи.
    Настоящая запись в файл появится на практике 8. */
-static void command_record(int argc, char *argv[]) {
+static int command_record(int argc, char *argv[]) {
     if (argc < 3) {
         printf("record needs a key and a value\n");
-        return;
+        return CLI_ERROR;
     }
     const char *key = argv[1];
     const char *value = argv[2];
@@ -264,7 +282,7 @@ static void command_record(int argc, char *argv[]) {
                                        record_flags_set(0, RECORD_FLAG_PUT), key, value, &size);
     if (status != RECORD_OK) {
         printf("Build error: %s\n", record_status_text(status));
-        return;
+        return CLI_ERROR;
     }
     printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n",
            size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
@@ -291,118 +309,166 @@ static void command_record(int argc, char *argv[]) {
     status = record_parse(buffer, size, &header);
     printf("After corrupting the key length: %s\n", record_status_text(status));
     buffer[2] ^= 0x01u;
+    return CLI_OK;
 }
 
-static void command_use(Session *session, int argc, char *argv[]) {
+static int command_use(Session *session, int argc, char *argv[]) {
     if (argc < 2) {
         printf("use needs a store number\n");
-        return;
+        return CLI_ERROR;
     }
     int number = (int)strtol(argv[1], NULL, 10);
     if (!session_select(session, number)) {
         printf("The store number is from 1 to %d\n", SESSION_STORES);
-        return;
+        return CLI_ERROR;
     }
     printf("Selected store %d (keys: %d)\n", number, store_count(session_current(session)));
+    return CLI_OK;
 }
 
-static void command_which(Session *session) {
+static int command_which(Session *session) {
     printf("Current store: %d, keys in it: %d\n",
            session->current + 1, store_count(session_current(session)));
     printf("Keys in the other store: %d\n", store_count(session_other(session)));
+    return CLI_OK;
 }
 
-static void command_copy(Session *session, int argc, char *argv[]) {
+static int command_copy(Session *session, int argc, char *argv[]) {
     if (argc < 2) {
         printf("copy needs a key\n");
-        return;
+        return CLI_ERROR;
     }
     const char *value = NULL;
     if (store_get(session_current(session), argv[1], &value) != STORE_OK) {
         printf("The key is not in the current store\n");
-        return;
+        return CLI_OK;
     }
     if (store_put(session_other(session), argv[1], value, NULL) != STORE_OK) {
         printf("Copy failed\n");
-        return;
+        return CLI_ERROR;
     }
     printf("Copied to the other store\n");
+    return CLI_OK;
 }
 
-static void command_sizes(void) {
+static int command_sizes(void) {
     printf("Store size: %u bytes\n", (unsigned)sizeof(Store));
     printf("Pointer size: %u bytes\n", (unsigned)sizeof(Store *));
     printf("The store cannot be passed by value: a 2.7 MB copy\n");
     printf("would not fit on the stack, and changes to it would be lost anyway.\n");
+    return CLI_OK;
+}
+
+/* Пишет скрипт из n команд put. Руками файл на тысячу строк не набрать,
+   а проверять разбор скриптов на нём нужно. */
+static int command_genscript(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("genscript needs a file name and a number of pairs\n");
+        return CLI_ERROR;
+    }
+    const char *path = argv[1];
+    long n = strtol(argv[2], NULL, 10);
+    if (n <= 0 || n > 10000000) {
+        printf("The number of pairs must be from 1 to 10000000\n");
+        return CLI_ERROR;
+    }
+    FILE *file = fopen(path, "w");
+    if (file == NULL) {
+        printf("Cannot create the file: %s\n", path);
+        return CLI_ERROR;
+    }
+    fprintf(file, "# script of %ld pairs, made by genscript\n", n);
+    for (long i = 1; i <= n; ++i) {
+        fprintf(file, "put key%06ld \"value number %ld\"\n", i, i);
+    }
+    /* Ошибка записи (например, кончилось место на диске) видна только
+       при закрытии файла, поэтому результат fclose тоже проверяется. */
+    if (fclose(file) != 0) {
+        printf("Error writing the file: %s\n", path);
+        return CLI_ERROR;
+    }
+    printf("Script written %s: %ld commands\n", path, n);
+    return CLI_OK;
+}
+
+static int command_script(Session *session, int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("script needs a file name\n");
+        return CLI_ERROR;
+    }
+    int stop = argc >= 3 && strcmp(argv[2], "stop") == 0;
+    /* Ошибки внутри скрипта уже сообщены с номерами строк; сама команда
+       script выполнилась, даже если скрипт был с ошибками. */
+    script_run(session, argv[1], stop);
+    return CLI_OK;
 }
 
 int cli_execute(Session *session, int argc, char *argv[]) {
     if (argc == 0) {
-        return 1;
+        return CLI_OK;
     }
     /* Команды над парами работают с текущим хранилищем сессии. */
     Store *store = session_current(session);
     const char *name = argv[0];
     if (strcmp(name, "put") == 0) {
-        command_put(store, argc, argv);
-    } else if (strcmp(name, "get") == 0) {
-        command_get(store, argc, argv);
-    } else if (strcmp(name, "del") == 0) {
-        command_del(store, argc, argv);
-    } else if (strcmp(name, "list") == 0) {
-        command_list(store);
-    } else if (strcmp(name, "sorted") == 0) {
-        command_sorted(store);
-    } else if (strcmp(name, "range") == 0) {
-        command_range(store, argc, argv);
-    } else if (strcmp(name, "stats") == 0) {
+        return command_put(store, argc, argv);
+    }
+    if (strcmp(name, "get") == 0) {
+        return command_get(store, argc, argv);
+    }
+    if (strcmp(name, "del") == 0) {
+        return command_del(store, argc, argv);
+    }
+    if (strcmp(name, "list") == 0) {
+        return command_list(store);
+    }
+    if (strcmp(name, "sorted") == 0) {
+        return command_sorted(store);
+    }
+    if (strcmp(name, "range") == 0) {
+        return command_range(store, argc, argv);
+    }
+    if (strcmp(name, "stats") == 0) {
         print_stats(store);
-    } else if (strcmp(name, "bench") == 0) {
-        command_bench(argc, argv);
-    } else if (strcmp(name, "collide") == 0) {
-        command_collide();
-    } else if (strcmp(name, "record") == 0) {
-        command_record(argc, argv);
-    } else if (strcmp(name, "use") == 0) {
-        command_use(session, argc, argv);
-    } else if (strcmp(name, "which") == 0) {
-        command_which(session);
-    } else if (strcmp(name, "copy") == 0) {
-        command_copy(session, argc, argv);
-    } else if (strcmp(name, "sizes") == 0) {
-        command_sizes();
-    } else if (strcmp(name, "help") == 0) {
+        return CLI_OK;
+    }
+    if (strcmp(name, "bench") == 0) {
+        return command_bench(argc, argv);
+    }
+    if (strcmp(name, "collide") == 0) {
+        return command_collide();
+    }
+    if (strcmp(name, "record") == 0) {
+        return command_record(argc, argv);
+    }
+    if (strcmp(name, "use") == 0) {
+        return command_use(session, argc, argv);
+    }
+    if (strcmp(name, "which") == 0) {
+        return command_which(session);
+    }
+    if (strcmp(name, "copy") == 0) {
+        return command_copy(session, argc, argv);
+    }
+    if (strcmp(name, "sizes") == 0) {
+        return command_sizes();
+    }
+    if (strcmp(name, "script") == 0) {
+        return command_script(session, argc, argv);
+    }
+    if (strcmp(name, "genscript") == 0) {
+        return command_genscript(argc, argv);
+    }
+    if (strcmp(name, "help") == 0) {
         cli_print_help();
-    } else if (strcmp(name, "quit") == 0 || strcmp(name, "exit") == 0) {
-        return 0;
-    } else {
-        printf("Unknown command: %s\n", name);
-        printf("Type help for the list of commands.\n");
+        return CLI_OK;
     }
-    return 1;
-}
-
-/* Разбивает строку на слова по пробелам: пробелы заменяются нулями, а в argv
-   попадают указатели на начала слов внутри самой строки. Слова сверх max_args
-   отбрасываются. Кавычки появятся на практике 6. */
-static int split_words(char *line, char *argv[], int max_args) {
-    int argc = 0;
-    char *p = line;
-    while (argc < max_args) {
-        while (*p != '\0' && isspace((unsigned char)*p)) {
-            *p = '\0';
-            ++p;
-        }
-        if (*p == '\0') {
-            return argc;
-        }
-        argv[argc] = p;
-        ++argc;
-        while (*p != '\0' && !isspace((unsigned char)*p)) {
-            ++p;
-        }
+    if (strcmp(name, "quit") == 0 || strcmp(name, "exit") == 0) {
+        return CLI_QUIT;
     }
-    return argc;
+    printf("Unknown command: %s\n", name);
+    printf("Type help for the list of commands.\n");
+    return CLI_ERROR;
 }
 
 /* Дочитывает и выбрасывает остаток строки до перевода строки или конца ввода. */
@@ -431,9 +497,14 @@ void cli_run_interactive(Session *session) {
             if (strchr(line, '\n') == NULL) {
                 skip_rest_of_line();
             }
-            char *argv[CLI_ARGS_MAX];
-            int argc = split_words(line, argv, CLI_ARGS_MAX);
-            running = cli_execute(session, argc, argv);
+            char *argv[PARSER_ARGS_MAX];
+            int argc = 0;
+            ParserStatus status = parser_split(line, argv, PARSER_ARGS_MAX, &argc);
+            if (status != PARSER_OK) {
+                printf("Cannot parse the line: %s\n", parser_status_text(status));
+            } else {
+                running = cli_execute(session, argc, argv) != CLI_QUIT;
+            }
         }
     }
     printf("Done.\n");

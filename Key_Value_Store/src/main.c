@@ -15,14 +15,15 @@ int main(int argc, char *argv[]) {
     }
     session_init(session);
 
-    /* С аргументами: одна команда и выход. Без аргументов: интерактивный режим.
-       Нулевой аргумент — имя программы, команда начинается с первого. */
+    /* С аргументами: одна команда и выход, код возврата 1, если команда
+       не выполнилась. Без аргументов: интерактивный режим. */
+    int result = 0;
     if (argc > 1) {
-        cli_execute(session, argc - 1, argv + 1);
+        result = cli_execute(session, argc - 1, argv + 1) == CLI_ERROR ? 1 : 0;
     } else {
         cli_run_interactive(session);
     }
 
     free(session);
-    return 0;
+    return result;
 }
