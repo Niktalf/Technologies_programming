@@ -1,8 +1,11 @@
 #include "cli.h"
 #include "store.h"
 
+/* Хеш-таблица весит около 2,7 МБ и поэтому статическая:
+   в стеке функции main она бы не поместилась. */
+static Store store;
+
 int main(int argc, char *argv[]) {
-    Store store;
     store_init(&store);
 
     /* С аргументами: одна команда и выход. Без аргументов: интерактивный режим.

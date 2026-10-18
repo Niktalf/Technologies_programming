@@ -2,12 +2,20 @@
 #include <string.h>
 
 #include "logfile.h"
+#include "parse.h"
 
 void logfile_init(LogFile *log) {
     if (log == NULL) {
         return;
     }
-    memset(log, 0, sizeof *log);
+    /* Массив записей не очищается: значимы только первые count элементов. */
+    log->count = 0;
+    log->lines = 0;
+    log->broken = 0;
+    log->overflow = 0;
+    log->truncated = 0;
+    log->loaded = 0;
+    log->path[0] = '\0';
 }
 
 const char *logfile_status_text(LogStatus status) {
@@ -23,11 +31,12 @@ const char *logfile_status_text(LogStatus status) {
     }
 }
 
-/* Убирает завершающий перевод строки, если он есть. */
-static void strip_newline(char *line) {
+/* Убирает завершающие переводы строки, в том числе виндовый \r. */
+static void strip_line_end(char *line) {
     size_t length = strlen(line);
-    if (length > 0 && line[length - 1] == '\n') {
-        line[length - 1] = '\0';
+    while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r')) {
+        --length;
+        line[length] = '\0';
     }
 }
 
@@ -39,97 +48,48 @@ static void skip_rest_of_line(FILE *file) {
     }
 }
 
-Level logfile_line_level(const char *line) {
-    if (line == NULL) {
-        return LEVEL_UNKNOWN;
+/* Учитывает одну прочитанную строку: пустая пропускается, испорченная
+   считается, разобранная кладётся в массив, если есть место. */
+static void add_line(LogFile *log, const char *line) {
+    ++log->lines;
+    if (line[0] == '\0') {
+        return; /* пустые строки не считаются испорченными */
     }
-    /* Уровень — второе поле: между первой и второй вертикальной чертой. */
-    const char *start = strchr(line, '|');
-    if (start == NULL) {
-        return LEVEL_UNKNOWN;
+    LogRecord record;
+    if (!parse_line(line, &record)) {
+        ++log->broken;
+        return;
     }
-    ++start;
-
-    char word[16];
-    size_t length = 0;
-    while (start[length] != '\0' && start[length] != '|') {
-        if (length + 1 >= sizeof word) {
-            return LEVEL_UNKNOWN; /* слишком длинное для уровня */
-        }
-        word[length] = start[length];
-        ++length;
+    /* Вместимость проверяется до записи в массив, а не после. */
+    if (log->count >= LOGFILE_CAPACITY) {
+        ++log->overflow;
+        return;
     }
-    if (start[length] != '|') {
-        return LEVEL_UNKNOWN; /* второй черты нет: строка не по формату */
-    }
-    word[length] = '\0';
-    return level_from_word(word);
+    log->records[log->count] = record;
+    ++log->count;
 }
 
-/* Проходит ли строка фильтр. Без фильтра проходят все строки, даже
-   испорченные. С фильтром строка с неизвестным уровнем не проходит:
-   иначе опечатка в уровне попала бы в выборку «только ошибки». */
-static int passes(const char *line, LevelMask mask) {
-    if (mask == LEVEL_MASK_ALL) {
-        return 1;
-    }
-    Level level = logfile_line_level(line);
-    return level != LEVEL_UNKNOWN && level_mask_has(mask, level);
-}
-
-/* Запоминает строку, прошедшую фильтр: в первые, если их ещё меньше десяти,
-   и в кольцевой буфер последних. Рядом сохраняется номер строки в файле. */
-static void remember_line(LogFile *log, const char *line) {
-    if (log->matched < LOGFILE_HEAD_SIZE) {
-        strcpy(log->head[log->matched], line);
-        log->head_number[log->matched] = log->total;
-    }
-    /* Кольцевой буфер: новая строка занимает место самой старой. */
-    long slot = log->matched % LOGFILE_TAIL_SIZE;
-    strcpy(log->tail[slot], line);
-    log->tail_number[slot] = log->total;
-    ++log->matched;
-}
-
-LogStatus logfile_scan(LogFile *log, const char *path, LevelMask mask) {
+LogStatus logfile_load(LogFile *log, const char *path) {
     if (log == NULL || path == NULL) {
         return LOG_ERR_ARG;
     }
-    size_t path_length = strlen(path);
-    if (path_length >= LOGFILE_PATH_MAX) {
-        return LOG_ERR_ARG;
-    }
-    /* Путь сохраняется до очистки структуры: при повторном просмотре
-       сюда передают log->path, и очистка стёрла бы его раньше, чем он
-       понадобится. */
-    char saved_path[LOGFILE_PATH_MAX];
-    memcpy(saved_path, path, path_length + 1);
-
     FILE *file = fopen(path, "r");
     if (file == NULL) {
         return LOG_ERR_OPEN;
     }
 
     logfile_init(log);
-    memcpy(log->path, saved_path, path_length + 1);
-    log->mask = mask;
+    strncpy(log->path, path, sizeof log->path - 1);
+    log->path[sizeof log->path - 1] = '\0';
 
     char line[LOGFILE_LINE_MAX];
     while (fgets(line, (int)sizeof line, file) != NULL) {
-        /* Строка длиннее буфера: дочитываем хвост, чтобы он не стал новой строкой. */
         if (strchr(line, '\n') == NULL && !feof(file)) {
             skip_rest_of_line(file);
             ++log->truncated;
         }
-        strip_newline(line);
-        ++log->total;
-
-        if (logfile_line_level(line) == LEVEL_UNKNOWN) {
-            ++log->unknown;
-        }
-        if (passes(line, mask)) {
-            remember_line(log, line);
-        }
+        strip_line_end(line);
+        add_line(log, line);
     }
 
     fclose(file);
@@ -137,35 +97,62 @@ LogStatus logfile_scan(LogFile *log, const char *path, LevelMask mask) {
     return LOG_OK;
 }
 
-/* Сколько строк печатать: не больше запрошенного, размера буфера и числа строк. */
-static long print_limit(const LogFile *log, int count, int buffer_size) {
-    long limit = count < buffer_size ? count : buffer_size;
-    if (limit > log->matched) {
-        limit = log->matched;
-    }
-    return limit;
+void logfile_print_record(const LogRecord *record) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    timestamp_unpack(record->time, &year, &month, &day, &hour, &minute, &second);
+    printf("%04d-%02d-%02d %02d:%02d:%02d  %-5s  %-8s  %s\n",
+           year, month, day, hour, minute, second,
+           level_name(record->level), record->module, record->text);
 }
 
-void logfile_print_head(const LogFile *log, int count) {
-    if (log == NULL || !log->loaded) {
-        printf("Log is not loaded.\n");
+void logfile_print_head(const LogFile *log, int count, LevelMask mask) {
+    if (log == NULL) {
         return;
     }
-    long limit = print_limit(log, count, LOGFILE_HEAD_SIZE);
-    for (long i = 0; i < limit; ++i) {
-        printf("%ld: %s\n", log->head_number[i], log->head[i]);
+    int printed = 0;
+    for (long i = 0; i < log->count && printed < count; ++i) {
+        if (level_mask_has(mask, log->records[i].level)) {
+            logfile_print_record(&log->records[i]);
+            ++printed;
+        }
     }
 }
 
-void logfile_print_tail(const LogFile *log, int count) {
-    if (log == NULL || !log->loaded) {
-        printf("Log is not loaded.\n");
+void logfile_print_tail(const LogFile *log, int count, LevelMask mask) {
+    if (log == NULL) {
         return;
     }
-    long limit = print_limit(log, count, LOGFILE_TAIL_SIZE);
-    for (long i = log->matched - limit; i < log->matched; ++i) {
-        /* Тот же остаток от деления, что при записи, даёт верный порядок. */
-        long slot = i % LOGFILE_TAIL_SIZE;
-        printf("%ld: %s\n", log->tail_number[slot], log->tail[slot]);
+    /* Идём с конца, пока не наберём count подходящих записей, —
+       так находим, с какой записи начинать. Печатаем уже в прямом порядке. */
+    long first = log->count;
+    int found = 0;
+    while (first > 0 && found < count) {
+        --first;
+        if (level_mask_has(mask, log->records[first].level)) {
+            ++found;
+        }
     }
+    for (long i = first; i < log->count; ++i) {
+        if (level_mask_has(mask, log->records[i].level)) {
+            logfile_print_record(&log->records[i]);
+        }
+    }
+}
+
+long logfile_count_matching(const LogFile *log, LevelMask mask) {
+    if (log == NULL) {
+        return 0;
+    }
+    long matching = 0;
+    for (long i = 0; i < log->count; ++i) {
+        if (level_mask_has(mask, log->records[i].level)) {
+            ++matching;
+        }
+    }
+    return matching;
 }
