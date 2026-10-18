@@ -51,13 +51,16 @@ void commands_print_help(void) {
     printf("  gen stripes [count]      - color stripes, 8 by default\n");
     printf("  invert                   - invert\n");
     printf("  bright <number>          - brightness, e.g. bright 40 or bright -40\n");
+    printf("  size <w> <h>             - create an empty image\n");
     printf("  crop <x> <y> <w> <h>     - crop\n");
+    printf("  scale <w> <h>            - resize\n");
     printf("  rotate <angle>           - rotate by a multiple of 90 degrees\n");
     printf("  fill <x> <y> <r> <g> <b> - fill an area with a color\n");
-    printf("  filltest                 - fill on checker, gradient and a plain image\n");
+    printf("  filltest                 - fill on checker, gradient and plain images\n");
+    printf("  stress <file> [n]        - load, process and free n times\n");
     printf("  minmax                   - the darkest and the brightest point\n");
     printf("  walk                     - invert by walking a pointer\n");
-    printf("  demo                     - copy vs address: the cost of passing\n");
+    printf("  demo                     - copy of the structure vs address\n");
     printf("  load <file>              - read a PPM\n");
     printf("  save <file>              - write to PPM\n");
     printf("  colors                   - check the color operations\n");
@@ -74,6 +77,41 @@ static int require_image(const Editor *editor) {
     return 1;
 }
 
+/* Делает так, чтобы в редакторе было изображение заданного размера.
+   Новое изображение создаётся раньше, чем освобождается старое: если
+   размер неверен или памяти не хватило, прежнее изображение остаётся. */
+static int ensure_image(Editor *editor, int width, int height) {
+    if (editor->image.pixels != NULL
+        && editor->image.width == width && editor->image.height == height) {
+        return 1;
+    }
+    Image created;
+    if (!image_create(&created, width, height)) {
+        printf("Cannot create an image %d x %d: bad size or not enough memory\n",
+               width, height);
+        return 0;
+    }
+    image_destroy(&editor->image);
+    editor->image = created;
+    return 1;
+}
+
+static void do_size(Editor *editor, const Words *words) {
+    int width = 0;
+    int height = 0;
+    if (words->count != 3 || !parse_int(words->word[1], &width)
+        || !parse_int(words->word[2], &height)) {
+        printf("Usage: size <width> <height>\n");
+        return;
+    }
+    if (!ensure_image(editor, width, height)) {
+        return;
+    }
+    editor->loaded = 1;
+    printf("Image created %d x %d (%lu bytes)\n", width, height,
+           (unsigned long)((size_t)width * (size_t)height * sizeof(Pixel)));
+}
+
 static void do_gen(Editor *editor, const Words *words) {
     if (words->count < 2) {
         printf("Specify the kind: gradient, checker or stripes\n");
@@ -86,11 +124,13 @@ static void do_gen(Editor *editor, const Words *words) {
         printf("Not a number: %s\n", words->word[2]);
         return;
     }
+    /* Генератор рисует на изображении того размера, какой есть: размер
+       задаёт команда size, load или crop. Если изображения ещё нет,
+       создаётся 256 на 256. */
+    if (editor->image.pixels == NULL && !ensure_image(editor, 256, 256)) {
+        return;
+    }
 
-    /* Генератор рисует на изображении полного размера: после load или crop
-       ширина и высота могли уменьшиться, и без этого картинка получилась бы
-       маленькой. */
-    image_init(&editor->image);
     const char *kind = words->word[1];
     if (is_command(kind, "gradient")) {
         image_gradient(&editor->image);
@@ -103,7 +143,7 @@ static void do_gen(Editor *editor, const Words *words) {
         return;
     }
     editor->loaded = 1;
-    printf("Image created.\n");
+    printf("Image created %d x %d.\n", editor->image.width, editor->image.height);
 }
 
 static void do_invert(Editor *editor) {
@@ -170,11 +210,67 @@ static void do_rotate(Editor *editor, const Words *words) {
         printf("Not a number: %s\n", words->word[1]);
         return;
     }
-    if (!image_rotate(&editor->image, angle, &editor->scratch)) {
+    if (angle % 90 != 0) {
         printf("The angle must be a multiple of 90 degrees.\n");
         return;
     }
+    if (!image_rotate(&editor->image, angle)) {
+        printf("Not enough memory to rotate.\n");
+        return;
+    }
     printf("Rotated by %d. Size: %d x %d\n", angle, editor->image.width, editor->image.height);
+}
+
+static void do_scale(Editor *editor, const Words *words) {
+    if (!require_image(editor)) {
+        return;
+    }
+    int width = 0;
+    int height = 0;
+    if (words->count != 3 || !parse_int(words->word[1], &width)
+        || !parse_int(words->word[2], &height)) {
+        printf("Usage: scale <width> <height>\n");
+        return;
+    }
+    if (!image_resize(&editor->image, width, height)) {
+        printf("Resize failed: bad size or not enough memory.\n");
+        return;
+    }
+    printf("New size: %d x %d\n", editor->image.width, editor->image.height);
+}
+
+/* Задание 5: сто раз подряд загрузить файл, обработать — обрезать, увеличить,
+   повернуть — и освободить. Каждая операция выделяет новый блок
+   и освобождает старый. Если где-то освобождение забыто, потребление
+   памяти растёт с каждым кругом, а санитайзер назовёт место утечки. */
+static void do_stress(const Words *words) {
+    if (words->count < 2) {
+        printf("Usage: stress <file> [repeat count]\n");
+        return;
+    }
+    const char *path = words->word[1];
+    int times = 100;
+    if (words->count >= 3 && !parse_int(words->word[2], &times)) {
+        printf("Not a number: %s\n", words->word[2]);
+        return;
+    }
+    int failures = 0;
+    for (int i = 0; i < times; ++i) {
+        Image temp = { NULL, 0, 0 };
+        PpmStatus status = ppm_load(&temp, path);
+        if (status != PPM_OK) {
+            printf("Cannot read %s: %s\n", path, ppm_status_text(status));
+            return;
+        }
+        if (!image_crop(&temp, 0, 0, (temp.width + 1) / 2, (temp.height + 1) / 2)
+            || !image_resize(&temp, temp.width * 2, temp.height * 2)
+            || !image_rotate(&temp, 90)) {
+            ++failures;
+        }
+        image_destroy(&temp);
+        image_destroy(&temp); /* повторное освобождение безопасно: указатель обнулён */
+    }
+    printf("Loaded, processed and freed: %d times, failures: %d\n", times - failures, failures);
 }
 
 static void do_load(Editor *editor, const Words *words) {
@@ -195,14 +291,13 @@ static void do_load(Editor *editor, const Words *words) {
 
 /* Печатает итог заливки. */
 static void print_fill_report(FillReport report) {
-    printf("Pixels filled: %d, max recursion depth: %d\n", report.filled, report.max_depth);
+    printf("Pixels filled: %d, largest stack of pending points: %d\n",
+           report.filled, report.max_stack);
     if (report.filled == 0) {
         printf("Nothing changed: the point already has this color.\n");
     }
-    if (report.truncated) {
-        printf("Fill stopped: the area is too large for recursion (depth limit %d).\n",
-               FILL_MAX_DEPTH);
-        printf("Part of the area is not filled.\n");
+    if (report.failed) {
+        printf("Fill stopped: not enough memory. Part of the area is not filled.\n");
     }
 }
 
@@ -233,36 +328,41 @@ static void do_fill(Editor *editor, const Words *words) {
     print_fill_report(fill_region(&editor->image, x, y, color));
 }
 
-/* Отдельное изображение для опыта filltest, чтобы не портить изображение
-   пользователя. Статическое: оно весит 256 КБ. */
-static Image test_image;
-
-/* Задания 4 и 5: заливка из угла (0, 0) красным на трёх картинках.
-   Шахматка: залита одна клетка — соседняя клетка другого цвета, и заливка
-   через неё не проходит. Градиент: залит один столбец — у каждого столбца
-   свой оттенок серого, и соседний столбец для заливки уже «чужой» цвет.
-   Одноцветная картинка: область — все 65 536 пикселей, и глубина рекурсии
-   упирается в ограничение. */
-static void do_filltest(void) {
-    Pixel red = pixel_pack(255, 0, 0);
-
-    printf("Checker, cell 32:\n");
-    image_init(&test_image);
-    image_checker(&test_image, 32);
-    print_fill_report(fill_region(&test_image, 0, 0, red));
-
-    printf("Gradient:\n");
-    image_init(&test_image);
-    image_gradient(&test_image);
-    print_fill_report(fill_region(&test_image, 0, 0, red));
-
-    printf("Plain black image %d x %d:\n", IMAGE_WIDTH, IMAGE_HEIGHT);
-    image_init(&test_image);
-    print_fill_report(fill_region(&test_image, 0, 0, red));
+/* Заливает из угла (0, 0) красным изображение заданного размера,
+   нарисованное функцией draw, или чёрное, если draw равна NULL.
+   Изображение отдельное, чтобы не портить изображение пользователя. */
+static void fill_sample(const char *title, int width, int height, void (*draw)(Image *)) {
+    printf("%s %d x %d:\n", title, width, height);
+    Image sample;
+    if (!image_create(&sample, width, height)) {
+        printf("Not enough memory.\n");
+        return;
+    }
+    if (draw != NULL) {
+        draw(&sample);
+    }
+    print_fill_report(fill_region(&sample, 0, 0, pixel_pack(255, 0, 0)));
+    image_destroy(&sample);
 }
 
-/* Функция получает копию изображения: она меняет свою копию,
-   а изображение вызывающего остаётся прежним. И копия эта весит 256 КБ. */
+static void draw_checker32(Image *image) {
+    image_checker(image, 32);
+}
+
+/* Шахматка: залита одна клетка — соседняя клетка другого цвета, и заливка
+   через неё не проходит. Градиент: залит один столбец — у каждого столбца
+   свой оттенок серого. Одноцветная картинка: на практике 4 рекурсия
+   упиралась здесь в стек, теперь заливается вся, даже 2048 на 2048. */
+static void do_filltest(void) {
+    fill_sample("Checker, cell 32,", 256, 256, draw_checker32);
+    fill_sample("Gradient", 256, 256, image_gradient);
+    fill_sample("Plain black image", 256, 256, NULL);
+    fill_sample("Plain black image", 2048, 2048, NULL);
+}
+
+/* Структура Image теперь — указатель на пиксели и два размера. Копия
+   структуры копирует указатель, а не пиксели: «копия» смотрит на тот же
+   блок памяти. Такая копия называется поверхностной. */
 static void invert_copy(Image image) {
     pixels_invert(image.pixels, image.width * image.height);
 }
@@ -280,17 +380,19 @@ static void do_demo(Editor *editor) {
     invert_copy(editor->image);
     printf("After the function taking a copy:     pixel 0x%06X (was 0x%06X)\n",
            (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
+    invert_copy(editor->image); /* возвращаем как было */
 
     invert_pointer(&editor->image);
     printf("After the function taking an address: pixel 0x%06X (was 0x%06X)\n",
            (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
     invert_pointer(&editor->image); /* возвращаем как было */
 
-    printf("Image size: %u bytes, pointer size: %u bytes\n",
-           (unsigned)sizeof(Image), (unsigned)sizeof(Image *));
-    printf("The function taking a copy gets a quarter of a megabyte and changes only that.\n");
-    printf("Measuring the cost of this copy does not always work: seeing\n");
-    printf("that nobody needs the copy, the compiler may skip making it.\n");
+    printf("Image structure: %u bytes, pixels: %lu bytes\n", (unsigned)sizeof(Image),
+           (unsigned long)((size_t)image_pixel_count(&editor->image) * sizeof(Pixel)));
+    printf("Since practicum 7 the structure holds only a pointer to the pixels:\n");
+    printf("a copy of the structure points to the same pixels, so the function\n");
+    printf("taking a copy changed the original image too. A real copy of the\n");
+    printf("pixels needs its own block: image_copy.\n");
 }
 
 static void do_minmax(const Editor *editor) {
@@ -312,7 +414,7 @@ static void do_walk(Editor *editor) {
     }
     /* Указатель на конец — адрес сразу за последним пикселем. */
     Pixel *begin = editor->image.pixels;
-    Pixel *end = begin + editor->image.width * editor->image.height;
+    Pixel *end = begin + image_pixel_count(&editor->image);
     pixels_invert_walk(begin, end);
     printf("Inverted by walking a pointer.\n");
 }
@@ -348,8 +450,14 @@ int commands_execute(Editor *editor, const Words *words) {
         do_invert(editor);
     } else if (is_command(name, "bright")) {
         do_bright(editor, words);
+    } else if (is_command(name, "size")) {
+        do_size(editor, words);
     } else if (is_command(name, "crop")) {
         do_crop(editor, words);
+    } else if (is_command(name, "scale")) {
+        do_scale(editor, words);
+    } else if (is_command(name, "stress")) {
+        do_stress(words);
     } else if (is_command(name, "rotate")) {
         do_rotate(editor, words);
     } else if (is_command(name, "fill")) {

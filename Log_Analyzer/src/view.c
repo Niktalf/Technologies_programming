@@ -1,13 +1,45 @@
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "view.h"
 
 /* Массив указателей на записи журнала. Сами записи лежат в журнале
-   и никуда не перемещаются. Массивы статические: они размером с журнал. */
-static const LogRecord *items[LOGFILE_CAPACITY];
-static const LogRecord *buffer[LOGFILE_CAPACITY];
+   и никуда не перемещаются. Массивы в куче, размером с журнал. */
+static const LogRecord **items;
+static const LogRecord **buffer;
 static long count;
+static long capacity;
+
+/* Готовит массивы хотя бы на needed указателей. Возвращает 1 при успехе. */
+static int reserve(long needed) {
+    if (needed <= capacity) {
+        return 1;
+    }
+    const LogRecord **bigger = realloc(items, (size_t)needed * sizeof(const LogRecord *));
+    if (bigger == NULL) {
+        return 0;
+    }
+    items = bigger;
+    bigger = realloc(buffer, (size_t)needed * sizeof(const LogRecord *));
+    if (bigger == NULL) {
+        /* Первый массив уже вырос, второй нет: ёмкость не обновлена,
+           и лишнее место в первом просто не используется. */
+        return 0;
+    }
+    buffer = bigger;
+    capacity = needed;
+    return 1;
+}
+
+void view_free(void) {
+    free(items);
+    free(buffer);
+    items = NULL;
+    buffer = NULL;
+    count = 0;
+    capacity = 0;
+}
 
 const char *order_name(Order order) {
     switch (order) {
@@ -90,6 +122,10 @@ static void merge_sort(long left, long right, Order order) {
 }
 
 long view_sort(const LogFile *log, Order order) {
+    if (!reserve(log->count)) {
+        count = 0;
+        return 0;
+    }
     count = log->count;
     for (long i = 0; i < count; ++i) {
         /* Берём адрес записи, а не её копию. */

@@ -1,15 +1,145 @@
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "image.h"
 
-void image_init(Image *image) {
-    image->width = IMAGE_WIDTH;
-    image->height = IMAGE_HEIGHT;
-    for (int i = 0; i < IMAGE_WIDTH * IMAGE_HEIGHT; ++i) {
-        image->pixels[i] = pixel_pack(0, 0, 0);
+int image_pixel_count(const Image *image) {
+    if (image == NULL || image->pixels == NULL) {
+        return 0;
     }
+    return image->width * image->height;
+}
+
+int image_create(Image *image, int width, int height) {
+    if (image == NULL) {
+        return 0;
+    }
+    image->pixels = NULL;
+    image->width = 0;
+    image->height = 0;
+
+    if (width <= 0 || height <= 0 || width > IMAGE_MAX_SIDE || height > IMAGE_MAX_SIDE) {
+        return 0;
+    }
+    /* Переполнение проверяется до умножения: делим предельное значение
+       на высоту и сравниваем с шириной. */
+    if ((size_t)width > ((size_t)-1 / sizeof(Pixel)) / (size_t)height) {
+        return 0;
+    }
+
+    Pixel *block = calloc((size_t)width * (size_t)height, sizeof(Pixel));
+    if (block == NULL) {
+        return 0;
+    }
+    image->pixels = block;
+    image->width = width;
+    image->height = height;
+    return 1;
+}
+
+void image_destroy(Image *image) {
+    if (image == NULL) {
+        return;
+    }
+    free(image->pixels);
+    image->pixels = NULL; /* повторное освобождение безопасно */
+    image->width = 0;
+    image->height = 0;
+}
+
+int image_copy(Image *destination, const Image *source) {
+    if (destination == NULL || source == NULL || source->pixels == NULL) {
+        return 0;
+    }
+    if (!image_create(destination, source->width, source->height)) {
+        return 0;
+    }
+    memcpy(destination->pixels, source->pixels,
+           (size_t)image_pixel_count(source) * sizeof(Pixel));
+    return 1;
+}
+
+int image_crop(Image *image, int x, int y, int width, int height) {
+    if (image == NULL || image->pixels == NULL) {
+        return 0;
+    }
+    if (x < 0 || y < 0 || width <= 0 || height <= 0
+        || x + width > image->width || y + height > image->height) {
+        return 0;
+    }
+    Image cropped;
+    if (!image_create(&cropped, width, height)) {
+        return 0;
+    }
+    for (int row = 0; row < height; ++row) {
+        memcpy(&cropped.pixels[row * width],
+               &image->pixels[(y + row) * image->width + x],
+               (size_t)width * sizeof(Pixel));
+    }
+    /* Новый блок готов — только теперь освобождаем старый. Обратный порядок
+       потерял бы данные при нехватке памяти. */
+    image_destroy(image);
+    *image = cropped;
+    return 1;
+}
+
+int image_rotate(Image *image, int angle) {
+    if (image == NULL || image->pixels == NULL || angle % 90 != 0) {
+        return 0;
+    }
+    /* Число четвертей оборота от 0 до 3: -90 — это то же, что 270. */
+    int turns = ((angle / 90) % 4 + 4) % 4;
+    if (turns == 0) {
+        return 1;
+    }
+    Image rotated;
+    if (!image_create(&rotated,
+                      turns == 2 ? image->width : image->height,
+                      turns == 2 ? image->height : image->width)) {
+        return 0;
+    }
+    for (int y = 0; y < image->height; ++y) {
+        for (int x = 0; x < image->width; ++x) {
+            Pixel color = image_get(image, x, y);
+
+            if (turns == 1) {
+                /* 90 по часовой: столбец становится строкой */
+                image_set(&rotated, image->height - 1 - y, x, color);
+            } else if (turns == 2) {
+                /* 180: отражение по обеим осям */
+                image_set(&rotated, image->width - 1 - x, image->height - 1 - y, color);
+            } else {
+                /* 270 по часовой, то есть 90 против */
+                image_set(&rotated, y, image->width - 1 - x, color);
+            }
+        }
+    }
+    image_destroy(image);
+    *image = rotated;
+    return 1;
+}
+
+int image_resize(Image *image, int width, int height) {
+    if (image == NULL || image->pixels == NULL) {
+        return 0;
+    }
+    Image scaled;
+    if (!image_create(&scaled, width, height)) {
+        return 0;
+    }
+    /* Ближайший сосед: для каждой точки нового изображения берём ближайшую
+       точку старого. Умножение до деления. */
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            scaled.pixels[y * width + x] =
+                image_get(image, x * image->width / width, y * image->height / height);
+        }
+    }
+    image_destroy(image);
+    *image = scaled;
+    return 1;
 }
 
 int image_offset(const Image *image, int x, int y) {
@@ -38,7 +168,7 @@ void image_gradient(Image *image) {
        Умножение перед делением: иначе все значения кроме последнего станут нулём. */
     for (int y = 0; y < image->height; ++y) {
         for (int x = 0; x < image->width; ++x) {
-            int v = x * CHANNEL_MAX / (image->width - 1);
+            int v = image->width > 1 ? x * CHANNEL_MAX / (image->width - 1) : 0;
             image_set(image, x, y, pixel_pack((uint8_t)v, (uint8_t)v, (uint8_t)v));
         }
     }
@@ -109,20 +239,19 @@ void pixels_invert_walk(Pixel *begin, Pixel *end) {
 }
 
 void image_invert(Image *image) {
-    /* Имя массива в выражении превращается в адрес первого элемента,
-       поэтому изображение не копируется. */
-    pixels_invert(image->pixels, image->width * image->height);
+    /* В функцию уходит адрес блока пикселей, а не копия пикселей. */
+    pixels_invert(image->pixels, image_pixel_count(image));
 }
 
 void image_brightness(Image *image, int delta) {
-    pixels_brightness(image->pixels, image->width * image->height, delta);
+    pixels_brightness(image->pixels, image_pixel_count(image), delta);
 }
 
 int image_min_max(const Image *image, int *out_min, int *out_max) {
     if (image == NULL || out_min == NULL || out_max == NULL) {
         return 0;
     }
-    int total = image->width * image->height;
+    int total = image_pixel_count(image);
     if (total <= 0) {
         return 0;
     }
@@ -133,6 +262,7 @@ int image_min_max(const Image *image, int *out_min, int *out_max) {
     int high = low;
     for (int i = 1; i < total; ++i) {
         int value = pixel_luminance(image->pixels[i]);
+
         if (value < low) {
             low = value;
         }
@@ -164,63 +294,5 @@ int image_save_ppm(const Image *image, const char *path) {
         fputc('\n', file);
     }
     fclose(file);
-    return 1;
-}
-
-int image_crop(Image *image, int x, int y, int width, int height) {
-    if (image == NULL) {
-        return 0;
-    }
-    if (x < 0 || y < 0 || width <= 0 || height <= 0
-        || x > image->width - width || y > image->height - height) {
-        return 0; /* прямоугольник должен лежать внутри изображения */
-    }
-    /* Строки переезжают к началу массива по одной. Новое место строки
-       никогда не правее старого, поэтому, идя сверху вниз, мы не затираем
-       то, что ещё не скопировано. Области могут перекрываться, поэтому
-       memmove, а не memcpy. */
-    for (int row = 0; row < height; ++row) {
-        memmove(&image->pixels[row * width],
-                &image->pixels[(y + row) * image->width + x],
-                (size_t)width * sizeof(Pixel));
-    }
-    image->width = width;
-    image->height = height;
-    return 1;
-}
-
-int image_rotate(Image *image, int angle, Image *scratch) {
-    if (image == NULL || scratch == NULL || angle % 90 != 0) {
-        return 0;
-    }
-    /* Число четвертей оборота от 0 до 3: -90 — это то же, что 270. */
-    int turns = ((angle / 90) % 4 + 4) % 4;
-    if (turns == 0) {
-        return 1;
-    }
-    int width = image->width;
-    int height = image->height;
-    scratch->width = turns == 2 ? width : height;
-    scratch->height = turns == 2 ? height : width;
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            Pixel color = image_get(image, x, y);
-            if (turns == 1) {
-                /* 90 по часовой: столбец становится строкой */
-                image_set(scratch, height - 1 - y, x, color);
-            } else if (turns == 2) {
-                /* 180: отражение по обеим осям */
-                image_set(scratch, width - 1 - x, height - 1 - y, color);
-            } else {
-                /* 270 по часовой, то есть 90 против */
-                image_set(scratch, y, width - 1 - x, color);
-            }
-        }
-    }
-    memcpy(image->pixels, scratch->pixels,
-           (size_t)scratch->width * (size_t)scratch->height * sizeof(Pixel));
-    image->width = scratch->width;
-    image->height = scratch->height;
     return 1;
 }

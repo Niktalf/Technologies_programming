@@ -4,10 +4,6 @@
 #include "editor.h"
 #include "input.h"
 
-/* Редактор весит больше 256 КБ из-за изображения внутри,
-   поэтому он статический: в стеке функции он бы не поместился. */
-static Editor editor;
-
 /* Ошибки запуска, после которых программа завершается с ненулевым кодом,
    идут в поток ошибок: так их видно, даже если обычный вывод перенаправлен
    в файл. Ответы на команды — в обычный вывод. */
@@ -38,6 +34,9 @@ static int run_once(int argc, char *argv[]) {
         print_usage(argv[0]);
         return 1;
     }
+    /* Изображение теперь в куче, поэтому редактор — обычная локальная
+       переменная. Освободить его нужно на каждом пути выхода. */
+    Editor editor;
     editor_init(&editor);
     editor_set_path(&editor, argv[1]);
 
@@ -45,20 +44,23 @@ static int run_once(int argc, char *argv[]) {
     input_from_args(&words, argc - 2, argv + 2);
     commands_execute(&editor, &words);
 
-    if (!editor.loaded) {
-        return 0;
+    int result = 0;
+    if (editor.loaded) {
+        if (image_save_ppm(&editor.image, editor.path)) {
+            printf("Written: %s\n", editor.path);
+        } else {
+            fprintf(stderr, "Cannot write the file: %s\n", editor.path);
+            result = 1;
+        }
     }
-    if (!image_save_ppm(&editor.image, editor.path)) {
-        fprintf(stderr, "Cannot write the file: %s\n", editor.path);
-        return 1;
-    }
-    printf("Written: %s\n", editor.path);
-    return 0;
+    editor_destroy(&editor);
+    return result;
 }
 
 /* Интерактивный режим: операции по одной, пока не будет команды выхода
    или ввод не кончится. Обе причины сводятся к одному флагу running. */
 static int run_interactive(void) {
+    Editor editor;
     editor_init(&editor);
     printf("Raster editor. Type help for the list of operations.\n");
 
@@ -74,6 +76,7 @@ static int run_interactive(void) {
             running = 0;
         }
     }
+    editor_destroy(&editor);
     printf("Done.\n");
     return 0;
 }
