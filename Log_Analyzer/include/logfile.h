@@ -37,6 +37,7 @@ typedef struct {
     long overflow;  /* записей, не поместившихся в массив */
     long truncated; /* строк длиннее буфера чтения */
     int loaded;     /* признак загруженного журнала */
+    int sorted;     /* упорядочены ли записи по времени */
     char path[LOGFILE_PATH_MAX];
 } LogFile;
 

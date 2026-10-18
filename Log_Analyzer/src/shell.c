@@ -6,6 +6,7 @@
 #include "generator.h"
 #include "level.h"
 #include "shell.h"
+#include "sort.h"
 #include "stats.h"
 #include "timestamp.h"
 
@@ -22,6 +23,9 @@ static void print_help(void) {
     printf("  stats                      - records by level\n");
     printf("  hours                      - distribution by hour\n");
     printf("  modules                    - records by module\n");
+    printf("  sort                       - sort the records by time\n");
+    printf("  since <date> <time>        - records from the moment on,\n");
+    printf("                               e.g. since 2026-03-15 12:00:00\n");
     printf("  level <levels...>          - set the filter, e.g. level error fatal\n");
     printf("  level all | none           - enable all levels or clear them all\n");
     printf("  filter                     - show the current filter\n");
@@ -239,6 +243,61 @@ static void command_stats(const LogFile *log, Report report) {
     }
 }
 
+static void command_sort(LogFile *log) {
+    if (!require_log(log)) {
+        return;
+    }
+    int depth = sort_by_time(log);
+    printf("Records sorted: %ld, max recursion depth: %d\n", log->count, depth);
+}
+
+/* Разбирает «ГГГГ-ММ-ДД» и «чч:мм:сс» в момент времени.
+   Возвращает TIMESTAMP_INVALID, если разобрать не удалось. */
+static Timestamp parse_moment(const char *date, const char *time) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (sscanf(date, "%d-%d-%d", &year, &month, &day) != 3
+        || sscanf(time, "%d:%d:%d", &hour, &minute, &second) != 3) {
+        return TIMESTAMP_INVALID;
+    }
+    return timestamp_pack(year, month, day, hour, minute, second);
+}
+
+static void command_since(LogFile *log, char *words[], int count) {
+    if (!require_log(log)) {
+        return;
+    }
+    if (count < 3) {
+        printf("Usage: since <YYYY-MM-DD> <hh:mm:ss>\n");
+        return;
+    }
+    Timestamp moment = parse_moment(words[1], words[2]);
+    if (moment == TIMESTAMP_INVALID) {
+        printf("Cannot parse the date and time\n");
+        return;
+    }
+
+    /* Двоичный поиск работает только на отсортированном массиве. */
+    if (!log->sorted) {
+        printf("The log is not sorted, sorting.\n");
+        command_sort(log);
+    }
+
+    long index = search_not_before(log, moment);
+    if (index == log->count) {
+        printf("No records at or after this moment.\n");
+        return;
+    }
+    printf("First matching record - number %ld of %ld:\n", index + 1, log->count);
+    for (long i = index; i < log->count && i < index + LOGFILE_SHOW; ++i) {
+        logfile_print_record(&log->records[i]);
+    }
+}
+
 void shell_run(LogFile *log) {
     if (log->loaded) {
         print_load_report(log);
@@ -283,6 +342,10 @@ void shell_run(LogFile *log) {
             command_stats(log, REPORT_HOURS);
         } else if (strcmp(name, "modules") == 0) {
             command_stats(log, REPORT_MODULES);
+        } else if (strcmp(name, "sort") == 0) {
+            command_sort(log);
+        } else if (strcmp(name, "since") == 0) {
+            command_since(log, words, count);
         } else if (strcmp(name, "level") == 0) {
             mask = parse_level_arguments(mask, words, count);
             level_mask_print(mask);

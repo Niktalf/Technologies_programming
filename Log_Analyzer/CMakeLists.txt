@@ -11,6 +11,7 @@ add_library(
         src/logfile.c
         src/parse.c
         src/shell.c
+        src/sort.c
         src/stats.c
         src/timestamp.c
 )

@@ -8,6 +8,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(
         ${PROJECT_NAME}_core
         src/game.c
+        src/map.c
+        src/reach.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "cli.h"
+#include "range.h"
 #include "record.h"
 
 #define CLI_LINE_MAX 256
@@ -19,6 +20,8 @@ void cli_print_help(void) {
     printf("  get <key>          - get the value\n");
     printf("  del <key>          - delete the pair\n");
     printf("  list               - list all pairs\n");
+    printf("  sorted             - all pairs in ascending key order\n");
+    printf("  range <from> <to>  - pairs with keys in the range, bounds included\n");
     printf("  stats              - table load and collisions\n");
     printf("  bench [n]          - compare hash and linear search on n keys\n");
     printf("  collide            - delete from the middle of a probe chain\n");
@@ -85,6 +88,26 @@ static void command_list(const Store *store) {
     /* Порядок — порядок ячеек таблицы, то есть произвольный.
        Упорядоченный вывод появится на практике 4. */
     store_for_each(store, print_pair, NULL);
+}
+
+static void command_sorted(const Store *store) {
+    int depth = 0;
+    int found = range_all(store, print_pair, NULL, &depth);
+    printf("Pairs total: %d, sort recursion depth: %d\n", found, depth);
+}
+
+static void command_range(const Store *store, int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("range needs two bounds\n");
+        return;
+    }
+    if (strcmp(argv[1], argv[2]) > 0) {
+        printf("The lower bound is greater than the upper one: the range is empty.\n");
+        return;
+    }
+    int depth = 0;
+    int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
+    printf("Pairs found: %d, sort recursion depth: %d\n", found, depth);
 }
 
 static void print_stats(const Store *store) {
@@ -254,6 +277,10 @@ int cli_execute(Store *store, int argc, char *argv[]) {
         command_del(store, argc, argv);
     } else if (strcmp(name, "list") == 0) {
         command_list(store);
+    } else if (strcmp(name, "sorted") == 0) {
+        command_sorted(store);
+    } else if (strcmp(name, "range") == 0) {
+        command_range(store, argc, argv);
     } else if (strcmp(name, "stats") == 0) {
         print_stats(store);
     } else if (strcmp(name, "bench") == 0) {

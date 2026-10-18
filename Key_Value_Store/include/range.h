@@ -1,0 +1,25 @@
+#ifndef RANGE_H
+#define RANGE_H
+
+#include "store.h"
+
+/* Практика 4: упорядоченный обход и диапазонные запросы.
+
+   Хеш-таблица хранит ключи в произвольном порядке, поэтому на каждый
+   запрос ключи собираются, сортируются слиянием и границы диапазона
+   находятся двоичным поиском. Это дорого: сортировка на каждый запрос.
+   Именно поэтому хранилища, которым нужны диапазоны, держат ключи
+   в дереве поиска, а не в хеш-таблице. */
+
+typedef void (*RangeVisitor)(const char *key, const char *value, void *context);
+
+/* Вызывает visit для всех пар с ключом от from до to включительно,
+   в порядке возрастания ключей. Возвращает число найденных пар.
+   Через depth_out сообщает наибольшую глубину рекурсии сортировки. */
+int range_query(const Store *store, const char *from, const char *to,
+                RangeVisitor visit, void *context, int *depth_out);
+
+/* Все пары в порядке возрастания ключей. */
+int range_all(const Store *store, RangeVisitor visit, void *context, int *depth_out);
+
+#endif /* RANGE_H */

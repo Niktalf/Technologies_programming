@@ -15,6 +15,7 @@ void logfile_init(LogFile *log) {
     log->overflow = 0;
     log->truncated = 0;
     log->loaded = 0;
+    log->sorted = 0;
     log->path[0] = '\0';
 }
 

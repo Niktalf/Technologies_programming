@@ -7,6 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_library(
         ${PROJECT_NAME}_core
         src/cli.c
+        src/range.c
         src/record.c
         src/store.c
 )
