@@ -14,6 +14,7 @@ add_library(
         src/sort.c
         src/stats.c
         src/timestamp.c
+        src/view.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

@@ -15,4 +15,8 @@ int sort_by_time(LogFile *log);
    если таких записей нет, возвращает log->count. */
 long search_not_before(const LogFile *log, Timestamp moment);
 
+/* Сортировка самих записей — нужна только для сравнения с сортировкой
+   указателей на практике 5. */
+void sort_records_for_cost(LogRecord *records, long count);
+
 #endif /* SORT_H */

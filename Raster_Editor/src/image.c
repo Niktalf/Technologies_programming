@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 
 #include "image.h"
@@ -76,18 +77,71 @@ void image_stripes(Image *image, int count) {
     }
 }
 
-void image_invert(Image *image) {
-    int total = image->width * image->height;
-    for (int i = 0; i < total; ++i) {
-        image->pixels[i] = pixel_invert(image->pixels[i]);
+void pixels_invert(Pixel *data, int count) {
+    if (data == NULL) {
+        return;
+    }
+    for (int i = 0; i < count; ++i) {
+        data[i] = pixel_invert(data[i]);
     }
 }
 
-void image_brightness(Image *image, int delta) {
-    int total = image->width * image->height;
-    for (int i = 0; i < total; ++i) {
-        image->pixels[i] = pixel_adjust_brightness(image->pixels[i], delta);
+void pixels_brightness(Pixel *data, int count, int delta) {
+    if (data == NULL) {
+        return;
     }
+    for (int i = 0; i < count; ++i) {
+        data[i] = pixel_adjust_brightness(data[i], delta);
+    }
+}
+
+void pixels_invert_walk(Pixel *begin, Pixel *end) {
+    if (begin == NULL || end == NULL) {
+        return;
+    }
+    /* Приращение указателя сдвигает адрес на размер элемента, а не на байт.
+       Сравнение с end, а не с последним элементом: иначе потеряется
+       ровно один пиксель. */
+    for (Pixel *p = begin; p != end; ++p) {
+        *p = pixel_invert(*p);
+    }
+}
+
+void image_invert(Image *image) {
+    /* Имя массива в выражении превращается в адрес первого элемента,
+       поэтому изображение не копируется. */
+    pixels_invert(image->pixels, image->width * image->height);
+}
+
+void image_brightness(Image *image, int delta) {
+    pixels_brightness(image->pixels, image->width * image->height, delta);
+}
+
+int image_min_max(const Image *image, int *out_min, int *out_max) {
+    if (image == NULL || out_min == NULL || out_max == NULL) {
+        return 0;
+    }
+    int total = image->width * image->height;
+    if (total <= 0) {
+        return 0;
+    }
+
+    /* Начальные значения берём из первого пикселя, а не из нуля:
+       иначе минимум всегда оказался бы нулём. */
+    int low = pixel_luminance(image->pixels[0]);
+    int high = low;
+    for (int i = 1; i < total; ++i) {
+        int value = pixel_luminance(image->pixels[i]);
+        if (value < low) {
+            low = value;
+        }
+        if (value > high) {
+            high = value;
+        }
+    }
+    *out_min = low;
+    *out_max = high;
+    return 1;
 }
 
 int image_save_ppm(const Image *image, const char *path) {

@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -156,4 +157,26 @@ long logfile_count_matching(const LogFile *log, LevelMask mask) {
         }
     }
     return matching;
+}
+
+int logfile_time_range(const LogFile *log, Timestamp *out_first, Timestamp *out_last) {
+    if (log == NULL || out_first == NULL || out_last == NULL || log->count == 0) {
+        return 0;
+    }
+    /* Начальные значения берём из первой записи, а не из нуля и не из
+       максимума: так проверка работает при любых данных. */
+    Timestamp first = log->records[0].time;
+    Timestamp last = first;
+    for (long i = 1; i < log->count; ++i) {
+        Timestamp t = log->records[i].time;
+        if (t < first) {
+            first = t;
+        }
+        if (t > last) {
+            last = t;
+        }
+    }
+    *out_first = first;
+    *out_last = last;
+    return 1;
 }

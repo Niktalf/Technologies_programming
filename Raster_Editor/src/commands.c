@@ -42,6 +42,9 @@ void commands_print_help(void) {
     printf("  bright <number>          - brightness, e.g. bright 40 or bright -40\n");
     printf("  fill <x> <y> <r> <g> <b> - fill an area with a color\n");
     printf("  filltest                 - fill on checker, gradient and a plain image\n");
+    printf("  minmax                   - the darkest and the brightest point\n");
+    printf("  walk                     - invert by walking a pointer\n");
+    printf("  demo                     - copy vs address: the cost of passing\n");
     printf("  save <file>              - write to PPM\n");
     printf("  colors                   - check the color operations\n");
     printf("  help                     - this list\n");
@@ -174,6 +177,62 @@ static void do_filltest(void) {
     print_fill_report(fill_region(&test_image, 0, 0, red));
 }
 
+/* Функция получает копию изображения: она меняет свою копию,
+   а изображение вызывающего остаётся прежним. И копия эта весит 256 КБ. */
+static void invert_copy(Image image) {
+    pixels_invert(image.pixels, image.width * image.height);
+}
+
+static void invert_pointer(Image *image) {
+    pixels_invert(image->pixels, image->width * image->height);
+}
+
+static void do_demo(Editor *editor) {
+    if (!require_image(editor)) {
+        return;
+    }
+    Pixel before = image_get(&editor->image, 0, 0);
+
+    invert_copy(editor->image);
+    printf("After the function taking a copy:     pixel 0x%06X (was 0x%06X)\n",
+           (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
+
+    invert_pointer(&editor->image);
+    printf("After the function taking an address: pixel 0x%06X (was 0x%06X)\n",
+           (unsigned)image_get(&editor->image, 0, 0), (unsigned)before);
+    invert_pointer(&editor->image); /* возвращаем как было */
+
+    printf("Image size: %u bytes, pointer size: %u bytes\n",
+           (unsigned)sizeof(Image), (unsigned)sizeof(Image *));
+    printf("The function taking a copy gets a quarter of a megabyte and changes only that.\n");
+    printf("Measuring the cost of this copy does not always work: seeing\n");
+    printf("that nobody needs the copy, the compiler may skip making it.\n");
+}
+
+static void do_minmax(const Editor *editor) {
+    if (!require_image(editor)) {
+        return;
+    }
+    int low = 0;
+    int high = 0;
+    if (!image_min_max(&editor->image, &low, &high)) {
+        printf("The image is empty.\n");
+        return;
+    }
+    printf("Darkest point: %d, brightest: %d\n", low, high);
+}
+
+static void do_walk(Editor *editor) {
+    if (!require_image(editor)) {
+        return;
+    }
+    /* Указатель на конец — адрес сразу за последним пикселем. */
+    Pixel *begin = editor->image.pixels;
+    Pixel *end = begin + editor->image.width * editor->image.height;
+    pixels_invert_walk(begin, end);
+    printf("Inverted by walking a pointer.\n");
+}
+
 static void do_save(Editor *editor, const Words *words) {
     if (!require_image(editor)) {
         return;
@@ -209,6 +268,12 @@ int commands_execute(Editor *editor, const Words *words) {
         do_fill(editor, words);
     } else if (is_command(name, "filltest")) {
         do_filltest();
+    } else if (is_command(name, "minmax")) {
+        do_minmax(editor);
+    } else if (is_command(name, "walk")) {
+        do_walk(editor);
+    } else if (is_command(name, "demo")) {
+        do_demo(editor);
     } else if (is_command(name, "save")) {
         do_save(editor, words);
     } else if (is_command(name, "colors")) {

@@ -61,4 +61,9 @@ void logfile_print_tail(const LogFile *log, int count, LevelMask mask);
 /* Сколько записей проходит фильтр. */
 long logfile_count_matching(const LogFile *log, LevelMask mask);
 
+/* Самое раннее и самое позднее время сразу: два результата возвращаются
+   через указатели, признак успеха — обычным значением. Вернуть «нет записей»
+   одним числом нельзя: любое время может быть настоящим. */
+int logfile_time_range(const LogFile *log, Timestamp *out_first, Timestamp *out_last);
+
 #endif /* LOGFILE_H */

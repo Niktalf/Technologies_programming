@@ -81,3 +81,8 @@ static long lower_bound(const LogRecord *records, long low, long high, Timestamp
 long search_not_before(const LogFile *log, Timestamp moment) {
     return lower_bound(log->records, 0, log->count, moment);
 }
+
+void sort_records_for_cost(LogRecord *records, long count) {
+    int depth = 0;
+    merge_sort(records, 0, count, 1, &depth);
+}

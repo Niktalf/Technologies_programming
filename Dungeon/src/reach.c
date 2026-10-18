@@ -1,34 +1,21 @@
+#include <stddef.h>
+
 #include "map.h"
 #include "reach.h"
 
-/* Массив пометок того же размера, что и карта. Пометки нельзя хранить
-   в самой карте: проверка не должна портить то, что она проверяет. */
-static char visited[MAP_ROWS][MAP_COLS];
-
-/* Итоги последней проверки: сколько клеток обошли и как глубоко зашли. */
-static int cells_seen;
-static int deepest;
-
-static void clear_marks(void) {
-    for (int y = 0; y < MAP_ROWS; ++y) {
-        for (int x = 0; x < MAP_COLS; ++x) {
-            visited[y][x] = 0;
-        }
-    }
-    cells_seen = 0;
-    deepest = 0;
-}
-
 /* Рекурсивный обход. Базовых случаев три, и все они проверяются в начале,
    до любого рекурсивного вызова: клетка за границей, клетка-стена, клетка
-   уже посещена. Каждый означает «дальше отсюда идти не надо». Порядок
-   важен: границы проверяются первыми, иначе visited[y][x] прочитал бы
-   чужую память. */
-static void visit(int x, int y, int depth) {
+   уже посещена. Порядок важен: границы проверяются первыми, иначе
+   visited[y][x] прочитал бы чужую память.
+
+   Массив пометок и счётчики приходят адресами: функция меняет их, и все
+   рекурсивные вызовы должны видеть одни и те же пометки, а не свои копии. */
+static void visit(char map[][MAP_COLS], char visited[][MAP_COLS],
+                  int x, int y, int depth, int *cells, int *deepest) {
     if (!map_inside(x, y)) {
         return;
     }
-    if (map_at(x, y) == TILE_WALL) {
+    if (map_at(map, x, y) == TILE_WALL) {
         return;
     }
     if (visited[y][x]) {
@@ -36,26 +23,22 @@ static void visit(int x, int y, int depth) {
     }
 
     visited[y][x] = 1;
-    ++cells_seen;
-    if (depth > deepest) {
-        deepest = depth;
+    ++*cells; /* скобки не нужны: ++ применяется к *cells, а не к указателю */
+    if (depth > *deepest) {
+        *deepest = depth;
     }
 
-    visit(x + 1, y, depth + 1);
-    visit(x - 1, y, depth + 1);
-    visit(x, y + 1, depth + 1);
-    visit(x, y - 1, depth + 1);
+    visit(map, visited, x + 1, y, depth + 1, cells, deepest);
+    visit(map, visited, x - 1, y, depth + 1, cells, deepest);
+    visit(map, visited, x, y + 1, depth + 1, cells, deepest);
+    visit(map, visited, x, y - 1, depth + 1, cells, deepest);
 }
 
-int reach_exit(int start_x, int start_y) {
-    /* Пометки прошлого запуска стираются. Иначе вторая проверка сразу
-       наткнулась бы на «уже посещено» и ничего бы не нашла. */
-    clear_marks();
-    visit(start_x, start_y, 1);
-
+/* Есть ли среди посещённых клеток выход. */
+static int exit_visited(char map[][MAP_COLS], char visited[][MAP_COLS]) {
     for (int y = 0; y < MAP_ROWS; ++y) {
         for (int x = 0; x < MAP_COLS; ++x) {
-            if (visited[y][x] && map_at(x, y) == TILE_EXIT) {
+            if (visited[y][x] && map_at(map, x, y) == TILE_EXIT) {
                 return 1;
             }
         }
@@ -63,12 +46,25 @@ int reach_exit(int start_x, int start_y) {
     return 0;
 }
 
-int reach_last_cells(void) {
-    return cells_seen;
-}
+int reach_exit(char map[][MAP_COLS], int start_x, int start_y, int *out_cells, int *out_depth) {
+    if (map == NULL) {
+        return 0;
+    }
+    /* Массив пометок — локальный: триста байт в стеке не страшны, и каждый
+       запуск начинает с чистого листа. Инициализатор {0} обнуляет весь
+       массив: локальный массив без инициализатора содержал бы мусор. */
+    char visited[MAP_ROWS][MAP_COLS] = { { 0 } };
+    int cells = 0;
+    int deepest = 0;
+    visit(map, visited, start_x, start_y, 1, &cells, &deepest);
 
-int reach_last_depth(void) {
-    return deepest;
+    if (out_cells != NULL) {
+        *out_cells = cells;
+    }
+    if (out_depth != NULL) {
+        *out_depth = deepest;
+    }
+    return exit_visited(map, visited);
 }
 
 /* Опыт с переполнением стека. Поле size x size без стен; рекурсия та же.

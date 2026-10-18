@@ -2,11 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "generator.h"
 #include "level.h"
 #include "shell.h"
 #include "sort.h"
+#include "view.h"
 #include "stats.h"
 #include "timestamp.h"
 
@@ -23,7 +25,11 @@ static void print_help(void) {
     printf("  stats                      - records by level\n");
     printf("  hours                      - distribution by hour\n");
     printf("  modules                    - records by module\n");
-    printf("  sort                       - sort the records by time\n");
+    printf("  order time|level|module    - viewing order (records do not move)\n");
+    printf("  view [n]                   - show n records in the chosen order\n");
+    printf("  span                       - the earliest and the latest time\n");
+    printf("  cost                       - compare sorting pointers and records\n");
+    printf("  sort                       - sort the records themselves by time\n");
     printf("  since <date> <time>        - records from the moment on,\n");
     printf("                               e.g. since 2026-03-15 12:00:00\n");
     printf("  level <levels...>          - set the filter, e.g. level error fatal\n");
@@ -183,6 +189,7 @@ static void command_load(LogFile *log, char *words[], int count) {
         printf("Error: %s (%s)\n", logfile_status_text(status), words[1]);
         return;
     }
+    view_reset(); /* указатели смотрели на записи прежнего файла */
     print_load_report(log);
 }
 
@@ -248,6 +255,7 @@ static void command_sort(LogFile *log) {
         return;
     }
     int depth = sort_by_time(log);
+    view_reset(); /* записи переставлены, указатели смотрят не туда */
     printf("Records sorted: %ld, max recursion depth: %d\n", log->count, depth);
 }
 
@@ -298,6 +306,96 @@ static void command_since(LogFile *log, char *words[], int count) {
     }
 }
 
+static void command_order(const LogFile *log, char *words[], int count) {
+    if (!require_log(log)) {
+        return;
+    }
+    Order order = ORDER_TIME;
+    if (count >= 2) {
+        if (strcmp(words[1], "level") == 0) {
+            order = ORDER_LEVEL;
+        } else if (strcmp(words[1], "module") == 0) {
+            order = ORDER_MODULE;
+        } else if (strcmp(words[1], "time") != 0) {
+            printf("The order is time, level or module\n");
+            return;
+        }
+    }
+    printf("Pointers sorted: %ld, order %s.\n", view_sort(log, order), order_name(order));
+    printf("The records themselves did not move: head still shows them\n");
+    printf("in the order they were read from the file.\n");
+}
+
+static void command_view(const LogFile *log, char *words[], int count) {
+    if (!require_log(log)) {
+        return;
+    }
+    long n = count >= 2 ? strtol(words[1], NULL, 10) : LOGFILE_SHOW;
+    if (n <= 0) {
+        n = LOGFILE_SHOW;
+    }
+    /* Порядок ещё не выбран — по умолчанию по времени. */
+    if (view_count() == 0) {
+        view_sort(log, ORDER_TIME);
+    }
+    view_print(n);
+}
+
+static void print_time(Timestamp value) {
+    int year = 0;
+    int month = 0;
+    int day = 0;
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    timestamp_unpack(value, &year, &month, &day, &hour, &minute, &second);
+    printf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
+}
+
+static void command_span(const LogFile *log) {
+    if (!require_log(log)) {
+        return;
+    }
+    Timestamp first = 0;
+    Timestamp last = 0;
+    if (!logfile_time_range(log, &first, &last)) {
+        printf("No records.\n");
+        return;
+    }
+    printf("Earliest: ");
+    print_time(first);
+    printf("\nLatest:   ");
+    print_time(last);
+    printf("\n");
+}
+
+/* Копия записей для замера: сортировать сами записи журнала нельзя,
+   иначе порядок чтения из файла потеряется. Статическая: она размером с журнал. */
+static LogRecord copy_space[LOGFILE_CAPACITY];
+
+/* Сравнение двух способов: переставлять указатели или сами записи. */
+static void command_cost(const LogFile *log) {
+    if (!require_log(log)) {
+        return;
+    }
+    clock_t start = clock();
+    view_sort(log, ORDER_TIME);
+    double by_pointers = (double)(clock() - start) / CLOCKS_PER_SEC;
+
+    for (long i = 0; i < log->count; ++i) {
+        copy_space[i] = log->records[i];
+    }
+    /* Тот же алгоритм, но переставляются сами записи, а не указатели. */
+    start = clock();
+    sort_records_for_cost(copy_space, log->count);
+    double by_records = (double)(clock() - start) / CLOCKS_PER_SEC;
+
+    printf("Records: %ld, size of one record: %u bytes\n",
+           log->count, (unsigned)sizeof(LogRecord));
+    printf("Sorting pointers:     %.4f s\n", by_pointers);
+    printf("Sorting the records:  %.4f s\n", by_records);
+}
+
 void shell_run(LogFile *log) {
     if (log->loaded) {
         print_load_report(log);
@@ -342,6 +440,14 @@ void shell_run(LogFile *log) {
             command_stats(log, REPORT_HOURS);
         } else if (strcmp(name, "modules") == 0) {
             command_stats(log, REPORT_MODULES);
+        } else if (strcmp(name, "order") == 0) {
+            command_order(log, words, count);
+        } else if (strcmp(name, "view") == 0) {
+            command_view(log, words, count);
+        } else if (strcmp(name, "span") == 0) {
+            command_span(log);
+        } else if (strcmp(name, "cost") == 0) {
+            command_cost(log);
         } else if (strcmp(name, "sort") == 0) {
             command_sort(log);
         } else if (strcmp(name, "since") == 0) {

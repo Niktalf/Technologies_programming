@@ -8,6 +8,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(
         ${PROJECT_NAME}_core
         src/game.c
+        src/hero.c
         src/map.c
         src/reach.c
 )

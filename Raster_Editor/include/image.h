@@ -39,8 +39,23 @@ void image_stripes(Image *image, int count);
 void image_invert(Image *image);
 void image_brightness(Image *image, int delta);
 
+/* Фильтры над куском памяти. Принимают адрес первого пикселя и их количество,
+   а не копию изображения: копия весит четверть мегабайта, и менять её
+   бессмысленно — изменения не вернутся к вызывающему. */
+void pixels_invert(Pixel *data, int count);
+void pixels_brightness(Pixel *data, int count, int delta);
+
+/* То же самое, но проход идёт не по индексам, а приращением указателя:
+   указатель на конец — это адрес за последним элементом, и разыменовывать
+   его нельзя, он нужен только для сравнения. */
+void pixels_invert_walk(Pixel *begin, Pixel *end);
+
 /* Записывает изображение в текстовый формат PPM (P3).
    Возвращает 1 при успехе и 0, если файл не открылся. */
 int image_save_ppm(const Image *image, const char *path);
+
+/* Самая тёмная и самая светлая яркость сразу: два результата возвращаются
+   через указатели, а признак успеха — обычным значением. */
+int image_min_max(const Image *image, int *out_min, int *out_max);
 
 #endif /* IMAGE_H */
