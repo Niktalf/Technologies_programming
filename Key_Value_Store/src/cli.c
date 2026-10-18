@@ -26,6 +26,10 @@ void cli_print_help(void) {
     printf("  bench [n]          - compare hash and linear search on n keys\n");
     printf("  collide            - delete from the middle of a probe chain\n");
     printf("  record <key> <val> - build a journal record and check it\n");
+    printf("  use <1|2>          - switch to the other store\n");
+    printf("  which              - which store is selected\n");
+    printf("  copy <key>         - copy the pair to the other store\n");
+    printf("  sizes              - why the store is passed by address\n");
     printf("  help               - this list\n");
     printf("  quit               - exit\n");
 }
@@ -93,6 +97,10 @@ static void command_list(const Store *store) {
 static void command_sorted(const Store *store) {
     int depth = 0;
     int found = range_all(store, print_pair, NULL, &depth);
+    if (found < 0) {
+        printf("Not enough memory for sorting\n");
+        return;
+    }
     printf("Pairs total: %d, sort recursion depth: %d\n", found, depth);
 }
 
@@ -107,6 +115,10 @@ static void command_range(const Store *store, int argc, char *argv[]) {
     }
     int depth = 0;
     int found = range_query(store, argv[1], argv[2], print_pair, NULL, &depth);
+    if (found < 0) {
+        printf("Not enough memory for sorting\n");
+        return;
+    }
     printf("Pairs found: %d, sort recursion depth: %d\n", found, depth);
 }
 
@@ -120,17 +132,13 @@ static void print_stats(const Store *store) {
     printf("Longest probe chain: %d\n", stats.longest_probe);
 }
 
-/* Хранилище для замеров отдельное, чтобы не засорять пользовательское.
-   Статическое по той же причине, что и основное: оно большое. */
-static Store bench_store;
-
 static double seconds_since(clock_t start) {
     return (double)(clock() - start) / CLOCKS_PER_SEC;
 }
 
 /* Ищет ключи key0 … key(n-1) указанной функцией поиска и возвращает,
    сколько найдено. Время поиска возвращается через elapsed. */
-static long search_all(long n,
+static long search_all(const Store *store, long n,
                        StoreStatus (*get)(const Store *, const char *, const char **),
                        double *elapsed) {
     long found = 0;
@@ -139,12 +147,25 @@ static long search_all(long n,
         char key[STORE_KEY_MAX];
         snprintf(key, sizeof key, "key%ld", i);
         const char *value = NULL;
-        if (get(&bench_store, key, &value) == STORE_OK) {
+        if (get(store, key, &value) == STORE_OK) {
             ++found;
         }
     }
     *elapsed = seconds_since(start);
     return found;
+}
+
+/* Хранилище для опытов отдельное, чтобы не засорять пользовательское.
+   Оно весит мегабайты, поэтому лежит в куче, а не в стеке, и живёт ровно
+   столько, сколько длится опыт. Вызывающий освобождает его через free. */
+static Store *new_scratch_store(void) {
+    Store *scratch = malloc(sizeof *scratch);
+    if (scratch == NULL) {
+        printf("Not enough memory\n");
+        return NULL;
+    }
+    store_init(scratch);
+    return scratch;
 }
 
 /* Кладёт n ключей и ищет каждый двумя способами. */
@@ -155,17 +176,20 @@ static void command_bench(int argc, char *argv[]) {
         printf("The number of keys must be from 1 to %ld\n", limit);
         return;
     }
-    store_init(&bench_store);
+    Store *bench = new_scratch_store();
+    if (bench == NULL) {
+        return;
+    }
     for (long i = 0; i < n; ++i) {
         char key[STORE_KEY_MAX];
         snprintf(key, sizeof key, "key%ld", i);
-        store_put(&bench_store, key, "v", NULL);
+        store_put(bench, key, "v", NULL);
     }
 
     double t_hash = 0.0;
-    long found_hash = search_all(n, store_get, &t_hash);
+    long found_hash = search_all(bench, n, store_get, &t_hash);
     double t_linear = 0.0;
-    long found_linear = search_all(n, store_get_linear, &t_linear);
+    long found_linear = search_all(bench, n, store_get_linear, &t_linear);
 
     printf("Keys: %ld\n", n);
     printf("Hash:    found %ld in %.4f s\n", found_hash, t_hash);
@@ -173,7 +197,8 @@ static void command_bench(int argc, char *argv[]) {
     if (t_hash > 0.0) {
         printf("Hash is %.0f times faster\n", t_linear / t_hash);
     }
-    print_stats(&bench_store);
+    print_stats(bench);
+    free(bench);
 }
 
 /* Подбирает два ключа с одной домашней ячейкой, кладёт оба, удаляет первый
@@ -194,20 +219,24 @@ static void command_collide(void) {
         return;
     }
 
-    store_init(&bench_store);
-    store_put(&bench_store, first, "first", NULL);
-    store_put(&bench_store, second, "second", NULL);
+    Store *scratch = new_scratch_store();
+    if (scratch == NULL) {
+        return;
+    }
+    store_put(scratch, first, "first", NULL);
+    store_put(scratch, second, "second", NULL);
     printf("Keys %s and %s fall into the same cell %d.\n", first, second, home);
 
-    store_remove(&bench_store, first);
+    store_remove(scratch, first);
     printf("Deleted %s.\n", first);
 
     const char *value = NULL;
-    if (store_get(&bench_store, second, &value) == STORE_OK) {
+    if (store_get(scratch, second, &value) == STORE_OK) {
         printf("Key %s found: %s\n", second, value);
     } else {
         printf("Key %s is lost: the deleted cell broke the probe chain.\n", second);
     }
+    free(scratch);
 }
 
 /* Печатает байты буфера шестнадцатеричными числами. */
@@ -264,10 +293,55 @@ static void command_record(int argc, char *argv[]) {
     buffer[2] ^= 0x01u;
 }
 
-int cli_execute(Store *store, int argc, char *argv[]) {
+static void command_use(Session *session, int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("use needs a store number\n");
+        return;
+    }
+    int number = (int)strtol(argv[1], NULL, 10);
+    if (!session_select(session, number)) {
+        printf("The store number is from 1 to %d\n", SESSION_STORES);
+        return;
+    }
+    printf("Selected store %d (keys: %d)\n", number, store_count(session_current(session)));
+}
+
+static void command_which(Session *session) {
+    printf("Current store: %d, keys in it: %d\n",
+           session->current + 1, store_count(session_current(session)));
+    printf("Keys in the other store: %d\n", store_count(session_other(session)));
+}
+
+static void command_copy(Session *session, int argc, char *argv[]) {
+    if (argc < 2) {
+        printf("copy needs a key\n");
+        return;
+    }
+    const char *value = NULL;
+    if (store_get(session_current(session), argv[1], &value) != STORE_OK) {
+        printf("The key is not in the current store\n");
+        return;
+    }
+    if (store_put(session_other(session), argv[1], value, NULL) != STORE_OK) {
+        printf("Copy failed\n");
+        return;
+    }
+    printf("Copied to the other store\n");
+}
+
+static void command_sizes(void) {
+    printf("Store size: %u bytes\n", (unsigned)sizeof(Store));
+    printf("Pointer size: %u bytes\n", (unsigned)sizeof(Store *));
+    printf("The store cannot be passed by value: a 2.7 MB copy\n");
+    printf("would not fit on the stack, and changes to it would be lost anyway.\n");
+}
+
+int cli_execute(Session *session, int argc, char *argv[]) {
     if (argc == 0) {
         return 1;
     }
+    /* Команды над парами работают с текущим хранилищем сессии. */
+    Store *store = session_current(session);
     const char *name = argv[0];
     if (strcmp(name, "put") == 0) {
         command_put(store, argc, argv);
@@ -289,6 +363,14 @@ int cli_execute(Store *store, int argc, char *argv[]) {
         command_collide();
     } else if (strcmp(name, "record") == 0) {
         command_record(argc, argv);
+    } else if (strcmp(name, "use") == 0) {
+        command_use(session, argc, argv);
+    } else if (strcmp(name, "which") == 0) {
+        command_which(session);
+    } else if (strcmp(name, "copy") == 0) {
+        command_copy(session, argc, argv);
+    } else if (strcmp(name, "sizes") == 0) {
+        command_sizes();
     } else if (strcmp(name, "help") == 0) {
         cli_print_help();
     } else if (strcmp(name, "quit") == 0 || strcmp(name, "exit") == 0) {
@@ -331,7 +413,7 @@ static void skip_rest_of_line(void) {
     }
 }
 
-void cli_run_interactive(Store *store) {
+void cli_run_interactive(Session *session) {
     printf("Key-value store. Type help for the list of commands.\n");
 
     /* Конец ввода и команда quit сводятся к одному флагу: у цикла одно
@@ -351,7 +433,7 @@ void cli_run_interactive(Store *store) {
             }
             char *argv[CLI_ARGS_MAX];
             int argc = split_words(line, argv, CLI_ARGS_MAX);
-            running = cli_execute(store, argc, argv);
+            running = cli_execute(session, argc, argv);
         }
     }
     printf("Done.\n");

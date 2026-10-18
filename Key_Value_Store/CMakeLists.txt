@@ -9,6 +9,7 @@ add_library(
         src/cli.c
         src/range.c
         src/record.c
+        src/session.c
         src/store.c
 )
 
