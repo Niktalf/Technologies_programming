@@ -12,35 +12,46 @@ static void skip_rest_of_line(void) {
     }
 }
 
-int input_read_line(char *buffer, size_t size) {
-    if (buffer == NULL || size == 0) {
+static void lower_first_word(Words *words) {
+    if (words->count == 0) {
+        return;
+    }
+    char *name = words->word[0];
+    for (size_t i = 0; name[i] != '\0'; ++i) {
+        name[i] = (char)tolower((unsigned char)name[i]);
+    }
+}
+
+int input_read_words(Words *words) {
+    words->count = 0;
+    if (fgets(words->line, INPUT_LINE_MAX, stdin) == NULL) {
         return 0;
     }
-    /* fgets читает не больше size - 1 символов и всегда ставит ноль в конце. */
-    if (fgets(buffer, (int)size, stdin) == NULL) {
-        buffer[0] = '\0';
-        return 0;
-    }
-    if (strchr(buffer, '\n') == NULL) {
+    /* Строка длиннее буфера: хвост дочитываем, иначе он станет следующей командой. */
+    if (strchr(words->line, '\n') == NULL) {
         skip_rest_of_line();
     }
 
-    size_t length = strlen(buffer);
-    while (length > 0 && isspace((unsigned char)buffer[length - 1])) {
-        --length;
-        buffer[length] = '\0';
+    /* strtok заменяет разделители нулями и возвращает начала слов внутри line.
+       Слова сверх INPUT_WORDS_MAX отбрасываются. */
+    char *token = strtok(words->line, " \t\r\n");
+    while (token != NULL && words->count < INPUT_WORDS_MAX) {
+        words->word[words->count] = token;
+        ++words->count;
+        token = strtok(NULL, " \t\r\n");
     }
-
-    size_t start = 0;
-    while (buffer[start] != '\0' && isspace((unsigned char)buffer[start])) {
-        ++start;
-    }
-    if (start > 0) {
-        memmove(buffer, buffer + start, length - start + 1);
-    }
-
-    for (size_t i = 0; buffer[i] != '\0'; ++i) {
-        buffer[i] = (char)tolower((unsigned char)buffer[i]);
-    }
+    lower_first_word(words);
     return 1;
+}
+
+void input_from_args(Words *words, int argc, char *argv[]) {
+    /* Аргументы программы менять нельзя, поэтому имя команды здесь
+       к нижнему регистру не приводится: регистр не учитывается в самом
+       разборе команд. */
+    words->count = 0;
+    words->line[0] = '\0';
+    for (int i = 0; i < argc && i < INPUT_WORDS_MAX; ++i) {
+        words->word[words->count] = argv[i];
+        ++words->count;
+    }
 }

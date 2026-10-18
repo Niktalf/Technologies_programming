@@ -1,6 +1,8 @@
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cli.h"
 #include "record.h"
@@ -17,6 +19,9 @@ void cli_print_help(void) {
     printf("  get <key>          - get the value\n");
     printf("  del <key>          - delete the pair\n");
     printf("  list               - list all pairs\n");
+    printf("  stats              - table load and collisions\n");
+    printf("  bench [n]          - compare hash and linear search on n keys\n");
+    printf("  collide            - delete from the middle of a probe chain\n");
     printf("  record <key> <val> - build a journal record and check it\n");
     printf("  help               - this list\n");
     printf("  quit               - exit\n");
@@ -67,18 +72,118 @@ static void command_del(Store *store, int argc, char *argv[]) {
     printf("deleted\n");
 }
 
+static void print_pair(const char *key, const char *value, void *context) {
+    (void)context; /* контекст здесь не нужен, но так устроен обход */
+    printf("%s = %s\n", key, value);
+}
+
 static void command_list(const Store *store) {
-    int total = store_count(store);
-    if (total == 0) {
+    if (store_count(store) == 0) {
         printf("The store is empty.\n");
         return;
     }
-    for (int i = 0; i < total; ++i) {
-        const char *key = NULL;
+    /* Порядок — порядок ячеек таблицы, то есть произвольный.
+       Упорядоченный вывод появится на практике 4. */
+    store_for_each(store, print_pair, NULL);
+}
+
+static void print_stats(const Store *store) {
+    StoreStats stats;
+    store_stats(store, &stats);
+    printf("Keys: %d of %d (%d%%)\n",
+           stats.count, stats.capacity, stats.count * 100 / stats.capacity);
+    printf("Cells marked as deleted: %d\n", stats.deleted);
+    printf("Keys not in their home cell: %d\n", stats.displaced);
+    printf("Longest probe chain: %d\n", stats.longest_probe);
+}
+
+/* Хранилище для замеров отдельное, чтобы не засорять пользовательское.
+   Статическое по той же причине, что и основное: оно большое. */
+static Store bench_store;
+
+static double seconds_since(clock_t start) {
+    return (double)(clock() - start) / CLOCKS_PER_SEC;
+}
+
+/* Ищет ключи key0 … key(n-1) указанной функцией поиска и возвращает,
+   сколько найдено. Время поиска возвращается через elapsed. */
+static long search_all(long n,
+                       StoreStatus (*get)(const Store *, const char *, const char **),
+                       double *elapsed) {
+    long found = 0;
+    clock_t start = clock();
+    for (long i = 0; i < n; ++i) {
+        char key[STORE_KEY_MAX];
+        snprintf(key, sizeof key, "key%ld", i);
         const char *value = NULL;
-        if (store_at(store, i, &key, &value) == STORE_OK) {
-            printf("%s = %s\n", key, value);
+        if (get(&bench_store, key, &value) == STORE_OK) {
+            ++found;
         }
+    }
+    *elapsed = seconds_since(start);
+    return found;
+}
+
+/* Кладёт n ключей и ищет каждый двумя способами. */
+static void command_bench(int argc, char *argv[]) {
+    const long limit = STORE_CAPACITY * 9 / 10;
+    long n = argc >= 2 ? strtol(argv[1], NULL, 10) : 10000;
+    if (n <= 0 || n > limit) {
+        printf("The number of keys must be from 1 to %ld\n", limit);
+        return;
+    }
+    store_init(&bench_store);
+    for (long i = 0; i < n; ++i) {
+        char key[STORE_KEY_MAX];
+        snprintf(key, sizeof key, "key%ld", i);
+        store_put(&bench_store, key, "v", NULL);
+    }
+
+    double t_hash = 0.0;
+    long found_hash = search_all(n, store_get, &t_hash);
+    double t_linear = 0.0;
+    long found_linear = search_all(n, store_get_linear, &t_linear);
+
+    printf("Keys: %ld\n", n);
+    printf("Hash:    found %ld in %.4f s\n", found_hash, t_hash);
+    printf("Linear:  found %ld in %.4f s\n", found_linear, t_linear);
+    if (t_hash > 0.0) {
+        printf("Hash is %.0f times faster\n", t_linear / t_hash);
+    }
+    print_stats(&bench_store);
+}
+
+/* Подбирает два ключа с одной домашней ячейкой, кладёт оба, удаляет первый
+   и ищет второй. Если удалённую ячейку пометить пустой, второй не найдётся. */
+static void command_collide(void) {
+    const char *first = "a0";
+    int home = store_home(first);
+
+    /* Перебираем a1, a2, … пока не найдём ключ с той же домашней ячейкой. */
+    char second[STORE_KEY_MAX] = "";
+    int found = 0;
+    for (long i = 1; i < 1000000 && !found; ++i) {
+        snprintf(second, sizeof second, "a%ld", i);
+        found = store_home(second) == home;
+    }
+    if (!found) {
+        printf("Could not find a collision.\n");
+        return;
+    }
+
+    store_init(&bench_store);
+    store_put(&bench_store, first, "first", NULL);
+    store_put(&bench_store, second, "second", NULL);
+    printf("Keys %s and %s fall into the same cell %d.\n", first, second, home);
+
+    store_remove(&bench_store, first);
+    printf("Deleted %s.\n", first);
+
+    const char *value = NULL;
+    if (store_get(&bench_store, second, &value) == STORE_OK) {
+        printf("Key %s found: %s\n", second, value);
+    } else {
+        printf("Key %s is lost: the deleted cell broke the probe chain.\n", second);
     }
 }
 
@@ -149,6 +254,12 @@ int cli_execute(Store *store, int argc, char *argv[]) {
         command_del(store, argc, argv);
     } else if (strcmp(name, "list") == 0) {
         command_list(store);
+    } else if (strcmp(name, "stats") == 0) {
+        print_stats(store);
+    } else if (strcmp(name, "bench") == 0) {
+        command_bench(argc, argv);
+    } else if (strcmp(name, "collide") == 0) {
+        command_collide();
     } else if (strcmp(name, "record") == 0) {
         command_record(argc, argv);
     } else if (strcmp(name, "help") == 0) {

@@ -13,19 +13,29 @@ static const char *const STATE_NAMES[STATE_COUNT] = {
     "poisoned", "blinded", "invisible", "petrified", "burning", "asleep"
 };
 
-static void print_picture(void) {
-    printf("##########################\n");
-    printf("#@.......#.......$.......#\n");
-    printf("#........#...............#\n");
-    printf("#....$...#.......#########\n");
-    printf("#................#.......#\n");
-    printf("#######..........#...>...#\n");
-    printf("#........................#\n");
-    printf("##########################\n");
-}
+/* Практика 3: карта — двумерный массив символов фиксированного размера.
+
+   Первый индекс — номер строки (координата y, растёт вниз), второй —
+   номер столбца (координата x, растёт вправо): map[y][x]. Решение
+   принято один раз и записано здесь, потому что путаница индексов —
+   главный источник ошибок: «север» начинает двигать героя вправо.
+
+   Герой в массив не записывается. Его координаты хранятся отдельно,
+   и символ @ подставляется только при выводе. Иначе клетка под героем
+   потеряла бы своё содержимое. */
+#define MAP_ROWS 10
+#define MAP_COLS 30
+
+#define TILE_WALL  '#'
+#define TILE_FLOOR '.'
+#define TILE_GOLD  '$'
+
+#define GOLD_PER_PILE 10
+
+static char map[MAP_ROWS][MAP_COLS];
 
 static void print_commands(void) {
-    printf("Commands: north, south, east, west, look, status, hit <N>,\n");
+    printf("Commands: north, south, east, west - step; look - map; status, hit <N>,\n");
     printf("         on <state>, off <state>, toggle <state>, quit\n");
     printf("States: poisoned, blinded, invisible, petrified, burning, asleep\n");
 }
@@ -59,9 +69,41 @@ void game_run(void) {
     int depth = 1;
     /* Шесть состояний в одной переменной, по биту на состояние. */
     unsigned int states = 0;
+    /* Координаты героя: столбец и строка. */
+    int hero_x = 1;
+    int hero_y = 1;
+
+    /* Комната: стены по периметру, пол внутри. */
+    for (int y = 0; y < MAP_ROWS; ++y) {
+        for (int x = 0; x < MAP_COLS; ++x) {
+            if (y == 0 || y == MAP_ROWS - 1 || x == 0 || x == MAP_COLS - 1) {
+                map[y][x] = TILE_WALL;
+            } else {
+                map[y][x] = TILE_FLOOR;
+            }
+        }
+    }
+    /* Внутренние стены: вертикальная с проходом внизу и горизонтальная
+       с проходом справа. */
+    for (int y = 1; y < MAP_ROWS - 3; ++y) {
+        map[y][9] = TILE_WALL;
+    }
+    for (int x = 12; x < MAP_COLS - 4; ++x) {
+        map[5][x] = TILE_WALL;
+    }
+    /* Золото. */
+    map[2][5] = TILE_GOLD;
+    map[3][20] = TILE_GOLD;
+    map[7][25] = TILE_GOLD;
+    map[8][2] = TILE_GOLD;
 
     printf("Welcome to the dungeon!\n\n");
-    print_picture();
+    for (int y = 0; y < MAP_ROWS; ++y) {
+        for (int x = 0; x < MAP_COLS; ++x) {
+            putchar(x == hero_x && y == hero_y ? '@' : map[y][x]);
+        }
+        putchar('\n');
+    }
     printf("\n");
     print_commands();
 
@@ -76,20 +118,54 @@ void game_run(void) {
             running = 0;
         } else if (strcmp(command, "quit") == 0) {
             running = 0;
-        } else if (strcmp(command, "north") == 0) {
-            printf("The hero goes north.\n");
-            ++turns;
-        } else if (strcmp(command, "south") == 0) {
-            printf("The hero goes south.\n");
-            ++turns;
-        } else if (strcmp(command, "east") == 0) {
-            printf("The hero goes east.\n");
-            ++turns;
-        } else if (strcmp(command, "west") == 0) {
-            printf("The hero goes west.\n");
-            ++turns;
+        } else if (strcmp(command, "north") == 0 || strcmp(command, "south") == 0
+                   || strcmp(command, "east") == 0 || strcmp(command, "west") == 0) {
+            int dx = 0;
+            int dy = 0;
+            if (strcmp(command, "north") == 0) {
+                dy = -1; /* север — вверх, то есть к меньшему номеру строки */
+            } else if (strcmp(command, "south") == 0) {
+                dy = 1;
+            } else if (strcmp(command, "east") == 0) {
+                dx = 1;
+            } else {
+                dx = -1;
+            }
+            int nx = hero_x + dx;
+            int ny = hero_y + dy;
+
+            /* Порядок проверок важен: сначала границы, и только потом
+               содержимое клетки. «И» в C вычисляется слева направо и
+               останавливается на первой лжи, поэтому map[ny][nx] не будет
+               прочитан, если индексы вне массива. */
+            if (nx < 0 || ny < 0 || nx >= MAP_COLS || ny >= MAP_ROWS) {
+                printf("No way further: edge of the map.\n");
+            } else if (map[ny][nx] == TILE_WALL) {
+                printf("There is a wall.\n");
+            } else {
+                hero_x = nx;
+                hero_y = ny;
+                ++turns;
+                if (map[ny][nx] == TILE_GOLD) {
+                    gold = gold + GOLD_PER_PILE;
+                    map[ny][nx] = TILE_FLOOR; /* собранное золото исчезает с карты */
+                    printf("The hero picks up %d gold. Total: %u\n", GOLD_PER_PILE, gold);
+                }
+                for (int y = 0; y < MAP_ROWS; ++y) {
+                    for (int x = 0; x < MAP_COLS; ++x) {
+                        putchar(x == hero_x && y == hero_y ? '@' : map[y][x]);
+                    }
+                    putchar('\n');
+                }
+            }
         } else if (strcmp(command, "look") == 0) {
-            print_picture();
+            for (int y = 0; y < MAP_ROWS; ++y) {
+                for (int x = 0; x < MAP_COLS; ++x) {
+                    putchar(x == hero_x && y == hero_y ? '@' : map[y][x]);
+                }
+                putchar('\n');
+            }
+            printf("The hero is at (%d, %d).\n", hero_x, hero_y);
         } else if (strcmp(command, "status") == 0) {
             printf("Health: %d / %d\n", hp, hp_max);
             /* Сначала неправильно: hp / hp_max — деление целых, и при

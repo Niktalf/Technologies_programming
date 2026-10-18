@@ -1,23 +1,27 @@
 #ifndef LOGFILE_H
 #define LOGFILE_H
 
-#include <stddef.h>
-
 #include "level.h"
+#include "timestamp.h"
 
-/* Журнал на практиках 1–2.
-   Весь файл в память не читается: хранятся только счётчики, первые и последние
-   строки. Разбор строк на поля появится на практике 6, хранение записей —
-   на практике 3.
+/* Практика 3: журнал хранится в памяти массивом разобранных записей,
+   а не перечитывается на каждую команду. Размер массива фиксирован,
+   динамический массив появится на практике 7. */
 
-   Практика 2: первые и последние строки запоминаются с учётом фильтра
-   по уровням. Файл целиком в памяти не лежит, поэтому при смене фильтра
-   он просматривается заново. */
+#define LOGFILE_LINE_MAX   512   /* длина строки вместе с переводом строки и нулём */
+#define LOGFILE_CAPACITY   10000 /* сколько записей помещается в массив */
+#define LOGFILE_MODULE_MAX 32
+#define LOGFILE_TEXT_MAX   256
+#define LOGFILE_PATH_MAX   256
+#define LOGFILE_SHOW       10    /* сколько записей печатают head и tail */
 
-#define LOGFILE_LINE_MAX  512 /* длина строки вместе с переводом строки и нулём */
-#define LOGFILE_HEAD_SIZE 10  /* сколько первых строк запоминается */
-#define LOGFILE_TAIL_SIZE 10  /* размер кольцевого буфера последних строк */
-#define LOGFILE_PATH_MAX  256
+/* Одна запись журнала: строка «время|уровень|модуль|текст», разобранная на поля. */
+typedef struct {
+    Timestamp time;
+    Level level;
+    char module[LOGFILE_MODULE_MAX];
+    char text[LOGFILE_TEXT_MAX];
+} LogRecord;
 
 typedef enum {
     LOG_OK = 0,
@@ -26,33 +30,34 @@ typedef enum {
 } LogStatus;
 
 typedef struct {
+    LogRecord records[LOGFILE_CAPACITY];
+    long count;     /* сколько записей в массиве */
+    long lines;     /* сколько строк в файле */
+    long broken;    /* строк, которые не удалось разобрать */
+    long overflow;  /* записей, не поместившихся в массив */
+    long truncated; /* строк длиннее буфера чтения */
+    int loaded;     /* признак загруженного журнала */
     char path[LOGFILE_PATH_MAX];
-    char head[LOGFILE_HEAD_SIZE][LOGFILE_LINE_MAX];
-    char tail[LOGFILE_TAIL_SIZE][LOGFILE_LINE_MAX];
-    long head_number[LOGFILE_HEAD_SIZE]; /* номера этих строк в файле */
-    long tail_number[LOGFILE_TAIL_SIZE];
-    long total;     /* сколько строк всего */
-    long matched;   /* сколько из них проходит фильтр */
-    long unknown;   /* сколько строк с неизвестным уровнем */
-    long truncated; /* сколько строк не поместилось в буфер и было обрезано */
-    LevelMask mask; /* фильтр, с которым сделан последний просмотр */
-    int loaded;     /* признак успешного прохода по файлу */
 } LogFile;
+
+/* Объект журнала весит около трёх мегабайт, поэтому он статический.
+   Локальной переменной в функции его делать нельзя: стек меньше. */
 
 void logfile_init(LogFile *log);
 
-/* Один проход по файлу: считает строки, запоминает первые и последние
-   из тех, что проходят фильтр mask. */
-LogStatus logfile_scan(LogFile *log, const char *path, LevelMask mask);
-
-/* Уровень строки журнала вида «время|УРОВЕНЬ|модуль|текст».
-   LEVEL_UNKNOWN, если второго поля нет или в нём не уровень. */
-Level logfile_line_level(const char *line);
+/* Читает файл целиком в массив записей. Строки, которые не удалось
+   разобрать, считаются, но не прерывают чтение. */
+LogStatus logfile_load(LogFile *log, const char *path);
 
 const char *logfile_status_text(LogStatus status);
 
-/* Печать первых и последних строк. Если строк меньше запрошенного, печатает все. */
-void logfile_print_head(const LogFile *log, int count);
-void logfile_print_tail(const LogFile *log, int count);
+void logfile_print_record(const LogRecord *record);
+/* Первые и последние count записей среди тех, что проходят фильтр mask.
+   Фильтр по уровням, введённый на практике 2, действует на все команды вывода. */
+void logfile_print_head(const LogFile *log, int count, LevelMask mask);
+void logfile_print_tail(const LogFile *log, int count, LevelMask mask);
+
+/* Сколько записей проходит фильтр. */
+long logfile_count_matching(const LogFile *log, LevelMask mask);
 
 #endif /* LOGFILE_H */

@@ -1,60 +1,153 @@
+#include <ctype.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "commands.h"
 #include "pixel.h"
 
-Operation operation_from_word(const char *word) {
-    if (word == NULL || word[0] == '\0') {
-        return OP_EMPTY;
+/* Сравнивает имя команды без учёта регистра.
+   В интерактивном режиме имя уже приведено к нижнему регистру,
+   а аргументы командной строки менять нельзя — поэтому сравниваем здесь. */
+static int is_command(const char *word, const char *name) {
+    size_t i = 0;
+    while (name[i] != '\0' && tolower((unsigned char)word[i]) == name[i]) {
+        ++i;
     }
-    if (strcmp(word, "info") == 0) {
-        return OP_INFO;
+    /* Совпадение — только если оба слова кончились одновременно. */
+    return word[i] == '\0' && name[i] == '\0';
+}
+
+/* Разбирает целое число. Возвращает 1, если в слове число и только оно. */
+static int parse_int(const char *word, int *out) {
+    char *end = NULL;
+    long value = strtol(word, &end, 10);
+    if (end == word || *end != '\0') {
+        return 0;
     }
-    if (strcmp(word, "colors") == 0) {
-        return OP_COLORS;
-    }
-    if (strcmp(word, "help") == 0) {
-        return OP_HELP;
-    }
-    if (strcmp(word, "quit") == 0 || strcmp(word, "exit") == 0) {
-        return OP_QUIT;
-    }
-    return OP_UNKNOWN;
+    *out = (int)value;
+    return 1;
 }
 
 void commands_print_help(void) {
     printf("Available operations:\n");
-    printf("  info    - information about the current image\n");
-    printf("  colors  - check the color operations\n");
-    printf("  help    - this list\n");
-    printf("  quit    - exit\n");
+    printf("  info                - information about the image\n");
+    printf("  gen gradient        - gradient from black to white\n");
+    printf("  gen checker [cell]  - checkerboard, cell 32 by default\n");
+    printf("  gen stripes [count] - color stripes, 8 by default\n");
+    printf("  invert              - invert\n");
+    printf("  bright <number>     - brightness, e.g. bright 40 or bright -40\n");
+    printf("  save <file>         - write to PPM\n");
+    printf("  colors              - check the color operations\n");
+    printf("  help                - this list\n");
+    printf("  quit                - exit\n");
 }
 
-int operation_execute(Operation operation, Editor *editor, const char *word) {
-    switch (operation) {
-    case OP_INFO:
-        editor_print_info(editor);
-        return 1;
-    case OP_COLORS:
-        commands_demo_colors();
-        return 1;
-    case OP_HELP:
-        commands_print_help();
-        return 1;
-    case OP_EMPTY:
-        return 1;
-    case OP_QUIT:
+/* Проверяет, что изображение есть, и печатает подсказку, если его нет. */
+static int require_image(const Editor *editor) {
+    if (!editor->loaded) {
+        printf("No image. Create one with gen.\n");
         return 0;
-    case OP_UNKNOWN:
-    default:
-        /* Неизвестная операция работу не завершает: печатаем подсказку и ждём дальше. */
-        printf("Unknown operation: %s\n", word != NULL ? word : "");
-        printf("Type help to see the list of operations.\n");
+    }
+    return 1;
+}
+
+static void do_gen(Editor *editor, const Words *words) {
+    if (words->count < 2) {
+        printf("Specify the kind: gradient, checker or stripes\n");
+        return;
+    }
+    /* Необязательный числовой параметр: размер клетки или число полос. */
+    int has_parameter = words->count >= 3;
+    int parameter = 0;
+    if (has_parameter && !parse_int(words->word[2], &parameter)) {
+        printf("Not a number: %s\n", words->word[2]);
+        return;
+    }
+
+    const char *kind = words->word[1];
+    if (is_command(kind, "gradient")) {
+        image_gradient(&editor->image);
+    } else if (is_command(kind, "checker")) {
+        image_checker(&editor->image, has_parameter ? parameter : 32);
+    } else if (is_command(kind, "stripes")) {
+        image_stripes(&editor->image, has_parameter ? parameter : 8);
+    } else {
+        printf("Unknown kind: %s\n", kind);
+        return;
+    }
+    editor->loaded = 1;
+    printf("Image created.\n");
+}
+
+static void do_invert(Editor *editor) {
+    if (!require_image(editor)) {
+        return;
+    }
+    image_invert(&editor->image);
+    printf("Inverted.\n");
+}
+
+static void do_bright(Editor *editor, const Words *words) {
+    if (!require_image(editor)) {
+        return;
+    }
+    int delta = 0;
+    if (words->count < 2 || !parse_int(words->word[1], &delta)) {
+        printf("Specify a number, e.g. bright 40\n");
+        return;
+    }
+    image_brightness(&editor->image, delta);
+    printf("Brightness changed by %d.\n", delta);
+}
+
+static void do_save(Editor *editor, const Words *words) {
+    if (!require_image(editor)) {
+        return;
+    }
+    /* Без аргумента изображение пишется в файл, заданный при запуске. */
+    const char *path = words->count >= 2 ? words->word[1] : editor->path;
+    if (path[0] == '\0') {
+        printf("Specify the file name: save <file>\n");
+        return;
+    }
+    if (!image_save_ppm(&editor->image, path)) {
+        printf("Cannot write the file: %s\n", path);
+        return;
+    }
+    editor_set_path(editor, path);
+    printf("Written: %s\n", path);
+}
+
+int commands_execute(Editor *editor, const Words *words) {
+    if (words->count == 0) {
         return 1;
     }
+    const char *name = words->word[0];
+    if (is_command(name, "info")) {
+        editor_print_info(editor);
+    } else if (is_command(name, "gen")) {
+        do_gen(editor, words);
+    } else if (is_command(name, "invert")) {
+        do_invert(editor);
+    } else if (is_command(name, "bright")) {
+        do_bright(editor, words);
+    } else if (is_command(name, "save")) {
+        do_save(editor, words);
+    } else if (is_command(name, "colors")) {
+        commands_demo_colors();
+    } else if (is_command(name, "help")) {
+        commands_print_help();
+    } else if (is_command(name, "quit") || is_command(name, "exit")) {
+        return 0;
+    } else {
+        /* Неизвестная операция работу не завершает: печатаем подсказку и ждём дальше. */
+        printf("Unknown operation: %s\n", name);
+        printf("Type help to see the list of operations.\n");
+    }
+    return 1;
 }
 
 /* Таблица преобразований на краевых и обычном цвете. */

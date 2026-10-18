@@ -8,6 +8,7 @@ add_library(
         ${PROJECT_NAME}_core
         src/commands.c
         src/editor.c
+        src/image.c
         src/input.c
         src/pixel.c
 )
