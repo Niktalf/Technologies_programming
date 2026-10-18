@@ -8,11 +8,12 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_library(
         ${PROJECT_NAME}_core
         src/command.c
+        src/entities.c
         src/game.c
-        src/hero.c
+        src/level.c
         src/map.c
-        src/monsters.c
         src/reach.c
+        src/status.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

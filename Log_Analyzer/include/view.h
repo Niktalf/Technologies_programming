@@ -18,9 +18,9 @@ typedef enum {
 
 const char *order_name(Order order);
 
-/* Строит и сортирует массив указателей. Возвращает число записей
-   или 0, если не хватило памяти. */
-long view_sort(const LogFile *log, Order order);
+/* Строит и сортирует массив указателей. Число записей в нём — view_count.
+   Возвращает LOG_ERR_MEMORY, если не хватило памяти. */
+LogStatus view_sort(const LogFile *log, Order order);
 
 /* Печатает первые count записей текущего порядка. */
 void view_print(long count);

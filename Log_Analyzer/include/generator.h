@@ -1,6 +1,8 @@
 #ifndef GENERATOR_H
 #define GENERATOR_H
 
+#include "status.h"
+
 /* Генератор тестовых журналов.
    С одинаковым зерном создаёт одинаковые файлы: это нужно для отладки,
    чтобы воспроизводить ошибку на том же самом журнале.
@@ -8,7 +10,7 @@
    Часть сообщений содержит вертикальную черту внутри текста —
    это проверка того, что разбор не режет сообщение на части.
 
-   Возвращает 1 при успехе и 0, если файл не открылся. */
-int generator_write(const char *path, long count, unsigned int seed);
+   Возвращает LOG_OK, LOG_ERR_OPEN или LOG_ERR_WRITE. */
+LogStatus generator_write(const char *path, long count, unsigned int seed);
 
 #endif /* GENERATOR_H */

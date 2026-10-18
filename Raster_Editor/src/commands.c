@@ -61,8 +61,8 @@ void commands_print_help(void) {
     printf("  minmax                   - the darkest and the brightest point\n");
     printf("  walk                     - invert by walking a pointer\n");
     printf("  demo                     - copy of the structure vs address\n");
-    printf("  load <file>              - read a PPM\n");
-    printf("  save <file>              - write to PPM\n");
+    printf("  load <file>              - read a PPM, either P3 or P6\n");
+    printf("  save <file> [text|bin]   - write, text P3 by default\n");
     printf("  colors                   - check the color operations\n");
     printf("  help                     - this list\n");
     printf("  quit                     - exit\n");
@@ -86,9 +86,9 @@ static int ensure_image(Editor *editor, int width, int height) {
         return 1;
     }
     Image created;
-    if (!image_create(&created, width, height)) {
-        printf("Cannot create an image %d x %d: bad size or not enough memory\n",
-               width, height);
+    ImgStatus status = image_create(&created, width, height);
+    if (status != IMG_OK) {
+        printf("Cannot create an image %d x %d: %s\n", width, height, img_status_text(status));
         return 0;
     }
     image_destroy(&editor->image);
@@ -190,8 +190,13 @@ static void do_crop(Editor *editor, const Words *words) {
             return;
         }
     }
-    if (!image_crop(&editor->image, v[0], v[1], v[2], v[3])) {
+    ImgStatus status = image_crop(&editor->image, v[0], v[1], v[2], v[3]);
+    if (status == IMG_EARG) {
         printf("Crop failed: the rectangle must lie inside the image.\n");
+        return;
+    }
+    if (status != IMG_OK) {
+        printf("Crop failed: %s\n", img_status_text(status));
         return;
     }
     printf("Cropped to %d x %d\n", editor->image.width, editor->image.height);
@@ -210,12 +215,13 @@ static void do_rotate(Editor *editor, const Words *words) {
         printf("Not a number: %s\n", words->word[1]);
         return;
     }
-    if (angle % 90 != 0) {
+    ImgStatus status = image_rotate(&editor->image, angle);
+    if (status == IMG_EARG) {
         printf("The angle must be a multiple of 90 degrees.\n");
         return;
     }
-    if (!image_rotate(&editor->image, angle)) {
-        printf("Not enough memory to rotate.\n");
+    if (status != IMG_OK) {
+        printf("Rotate failed: %s\n", img_status_text(status));
         return;
     }
     printf("Rotated by %d. Size: %d x %d\n", angle, editor->image.width, editor->image.height);
@@ -232,8 +238,9 @@ static void do_scale(Editor *editor, const Words *words) {
         printf("Usage: scale <width> <height>\n");
         return;
     }
-    if (!image_resize(&editor->image, width, height)) {
-        printf("Resize failed: bad size or not enough memory.\n");
+    ImgStatus status = image_resize(&editor->image, width, height);
+    if (status != IMG_OK) {
+        printf("Resize failed: %s\n", img_status_text(status));
         return;
     }
     printf("New size: %d x %d\n", editor->image.width, editor->image.height);
@@ -257,14 +264,14 @@ static void do_stress(const Words *words) {
     int failures = 0;
     for (int i = 0; i < times; ++i) {
         Image temp = { NULL, 0, 0 };
-        PpmStatus status = ppm_load(&temp, path);
-        if (status != PPM_OK) {
-            printf("Cannot read %s: %s\n", path, ppm_status_text(status));
+        ImgStatus status = ppm_load(&temp, path, NULL);
+        if (status != IMG_OK) {
+            printf("Cannot read %s: %s\n", path, img_status_text(status));
             return;
         }
-        if (!image_crop(&temp, 0, 0, (temp.width + 1) / 2, (temp.height + 1) / 2)
-            || !image_resize(&temp, temp.width * 2, temp.height * 2)
-            || !image_rotate(&temp, 90)) {
+        if (image_crop(&temp, 0, 0, (temp.width + 1) / 2, (temp.height + 1) / 2) != IMG_OK
+            || image_resize(&temp, temp.width * 2, temp.height * 2) != IMG_OK
+            || image_rotate(&temp, 90) != IMG_OK) {
             ++failures;
         }
         image_destroy(&temp);
@@ -279,14 +286,17 @@ static void do_load(Editor *editor, const Words *words) {
         return;
     }
     const char *path = words->word[1];
-    PpmStatus status = ppm_load(&editor->image, path);
-    if (status != PPM_OK) {
-        printf("Cannot read %s: %s\n", path, ppm_status_text(status));
+    PpmFormat format = PPM_TEXT;
+    ImgStatus status = ppm_load(&editor->image, path, &format);
+    if (status != IMG_OK) {
+        printf("Cannot read %s: %s\n", path, img_status_text(status));
         return;
     }
     editor->loaded = 1;
     editor_set_path(editor, path);
-    printf("Read: %s, size %d x %d\n", path, editor->image.width, editor->image.height);
+    printf("Read: %s (%s), size %d x %d\n", path,
+           format == PPM_BINARY ? "binary P6" : "text P3",
+           editor->image.width, editor->image.height);
 }
 
 /* Печатает итог заливки. */
@@ -323,9 +333,11 @@ static void do_fill(Editor *editor, const Words *words) {
         printf("Point (%d, %d) is outside the image\n", x, y);
         return;
     }
-    Pixel color = pixel_pack(channel_clamp(values[2]), channel_clamp(values[3]),
-                             channel_clamp(values[4]));
-    print_fill_report(fill_region(&editor->image, x, y, color));
+    /* Три канала собираются в одну структуру и передаются адресом,
+       а не тремя отдельными параметрами. */
+    Color color = { channel_clamp(values[2]), channel_clamp(values[3]),
+                    channel_clamp(values[4]) };
+    print_fill_report(fill_region(&editor->image, x, y, &color));
 }
 
 /* Заливает из угла (0, 0) красным изображение заданного размера,
@@ -334,14 +346,16 @@ static void do_fill(Editor *editor, const Words *words) {
 static void fill_sample(const char *title, int width, int height, void (*draw)(Image *)) {
     printf("%s %d x %d:\n", title, width, height);
     Image sample;
-    if (!image_create(&sample, width, height)) {
-        printf("Not enough memory.\n");
+    ImgStatus status = image_create(&sample, width, height);
+    if (status != IMG_OK) {
+        printf("%s\n", img_status_text(status));
         return;
     }
     if (draw != NULL) {
         draw(&sample);
     }
-    print_fill_report(fill_region(&sample, 0, 0, pixel_pack(255, 0, 0)));
+    Color red = { 255, 0, 0 };
+    print_fill_report(fill_region(&sample, 0, 0, &red));
     image_destroy(&sample);
 }
 
@@ -401,7 +415,7 @@ static void do_minmax(const Editor *editor) {
     }
     int low = 0;
     int high = 0;
-    if (!image_min_max(&editor->image, &low, &high)) {
+    if (image_min_max(&editor->image, &low, &high) != IMG_OK) {
         printf("The image is empty.\n");
         return;
     }
@@ -426,15 +440,25 @@ static void do_save(Editor *editor, const Words *words) {
     /* Без аргумента изображение пишется в файл, заданный при запуске. */
     const char *path = words->count >= 2 ? words->word[1] : editor->path;
     if (path[0] == '\0') {
-        printf("Specify the file name: save <file>\n");
+        printf("Specify the file name: save <file> [text|bin]\n");
         return;
     }
-    if (!image_save_ppm(&editor->image, path)) {
-        printf("Cannot write the file: %s\n", path);
+    PpmFormat format = PPM_TEXT;
+    if (words->count >= 3) {
+        if (is_command(words->word[2], "bin")) {
+            format = PPM_BINARY;
+        } else if (!is_command(words->word[2], "text")) {
+            printf("The kind is text or bin\n");
+            return;
+        }
+    }
+    ImgStatus status = ppm_save(&editor->image, path, format);
+    if (status != IMG_OK) {
+        printf("Cannot write %s: %s\n", path, img_status_text(status));
         return;
     }
     editor_set_path(editor, path);
-    printf("Written: %s\n", path);
+    printf("Written: %s (%s)\n", path, format == PPM_BINARY ? "binary P6" : "text P3");
 }
 
 int commands_execute(Editor *editor, const Words *words) {

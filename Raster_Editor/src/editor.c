@@ -23,9 +23,14 @@ void editor_destroy(Editor *editor) {
 }
 
 void editor_set_path(Editor *editor, const char *path) {
-    if (editor == NULL || path == NULL) {
+    /* save без имени файла передаёт сюда editor->path. Копировать строку
+       саму в себя через strncpy нельзя: при перекрытии областей поведение
+       не определено. Копировать в этом случае и нечего. */
+    if (editor == NULL || path == NULL || path == editor->path) {
         return;
     }
+    /* strncpy не ставит завершающий ноль, если строка длиннее буфера,
+       поэтому последний байт обнуляется явно. */
     strncpy(editor->path, path, sizeof editor->path - 1);
     editor->path[sizeof editor->path - 1] = '\0';
 }

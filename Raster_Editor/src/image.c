@@ -1,5 +1,4 @@
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,31 +11,30 @@ int image_pixel_count(const Image *image) {
     return image->width * image->height;
 }
 
-int image_create(Image *image, int width, int height) {
+ImgStatus image_create(Image *image, int width, int height) {
     if (image == NULL) {
-        return 0;
+        return IMG_EARG;
     }
     image->pixels = NULL;
     image->width = 0;
     image->height = 0;
 
     if (width <= 0 || height <= 0 || width > IMAGE_MAX_SIDE || height > IMAGE_MAX_SIDE) {
-        return 0;
+        return IMG_EARG;
     }
     /* Переполнение проверяется до умножения: делим предельное значение
        на высоту и сравниваем с шириной. */
     if ((size_t)width > ((size_t)-1 / sizeof(Pixel)) / (size_t)height) {
-        return 0;
+        return IMG_EARG;
     }
-
     Pixel *block = calloc((size_t)width * (size_t)height, sizeof(Pixel));
     if (block == NULL) {
-        return 0;
+        return IMG_ENOMEM;
     }
     image->pixels = block;
     image->width = width;
     image->height = height;
-    return 1;
+    return IMG_OK;
 }
 
 void image_destroy(Image *image) {
@@ -49,61 +47,68 @@ void image_destroy(Image *image) {
     image->height = 0;
 }
 
-int image_copy(Image *destination, const Image *source) {
+ImgStatus image_copy(Image *destination, const Image *source) {
     if (destination == NULL || source == NULL || source->pixels == NULL) {
-        return 0;
+        return IMG_EARG;
     }
-    if (!image_create(destination, source->width, source->height)) {
-        return 0;
+    ImgStatus status = image_create(destination, source->width, source->height);
+    if (status != IMG_OK) {
+        return status;
     }
     memcpy(destination->pixels, source->pixels,
            (size_t)image_pixel_count(source) * sizeof(Pixel));
-    return 1;
+    return IMG_OK;
 }
 
-int image_crop(Image *image, int x, int y, int width, int height) {
+/* Подменяет изображение новым: старый блок освобождается только теперь,
+   когда новый готов. Обратный порядок потерял бы данные при нехватке памяти. */
+static void replace(Image *image, Image *fresh) {
+    image_destroy(image);
+    *image = *fresh;
+}
+
+ImgStatus image_crop(Image *image, int x, int y, int width, int height) {
     if (image == NULL || image->pixels == NULL) {
-        return 0;
+        return IMG_EARG;
     }
+    /* Сравнение через вычитание: x + width могло бы переполнить int. */
     if (x < 0 || y < 0 || width <= 0 || height <= 0
-        || x + width > image->width || y + height > image->height) {
-        return 0;
+        || x > image->width - width || y > image->height - height) {
+        return IMG_EARG;
     }
     Image cropped;
-    if (!image_create(&cropped, width, height)) {
-        return 0;
+    ImgStatus status = image_create(&cropped, width, height);
+    if (status != IMG_OK) {
+        return status;
     }
     for (int row = 0; row < height; ++row) {
         memcpy(&cropped.pixels[row * width],
                &image->pixels[(y + row) * image->width + x],
                (size_t)width * sizeof(Pixel));
     }
-    /* Новый блок готов — только теперь освобождаем старый. Обратный порядок
-       потерял бы данные при нехватке памяти. */
-    image_destroy(image);
-    *image = cropped;
-    return 1;
+    replace(image, &cropped);
+    return IMG_OK;
 }
 
-int image_rotate(Image *image, int angle) {
+ImgStatus image_rotate(Image *image, int angle) {
     if (image == NULL || image->pixels == NULL || angle % 90 != 0) {
-        return 0;
+        return IMG_EARG;
     }
     /* Число четвертей оборота от 0 до 3: -90 — это то же, что 270. */
     int turns = ((angle / 90) % 4 + 4) % 4;
     if (turns == 0) {
-        return 1;
+        return IMG_OK;
     }
     Image rotated;
-    if (!image_create(&rotated,
-                      turns == 2 ? image->width : image->height,
-                      turns == 2 ? image->height : image->width)) {
-        return 0;
+    ImgStatus status = image_create(&rotated,
+                                    turns == 2 ? image->width : image->height,
+                                    turns == 2 ? image->height : image->width);
+    if (status != IMG_OK) {
+        return status;
     }
     for (int y = 0; y < image->height; ++y) {
         for (int x = 0; x < image->width; ++x) {
             Pixel color = image_get(image, x, y);
-
             if (turns == 1) {
                 /* 90 по часовой: столбец становится строкой */
                 image_set(&rotated, image->height - 1 - y, x, color);
@@ -116,18 +121,18 @@ int image_rotate(Image *image, int angle) {
             }
         }
     }
-    image_destroy(image);
-    *image = rotated;
-    return 1;
+    replace(image, &rotated);
+    return IMG_OK;
 }
 
-int image_resize(Image *image, int width, int height) {
+ImgStatus image_resize(Image *image, int width, int height) {
     if (image == NULL || image->pixels == NULL) {
-        return 0;
+        return IMG_EARG;
     }
     Image scaled;
-    if (!image_create(&scaled, width, height)) {
-        return 0;
+    ImgStatus status = image_create(&scaled, width, height);
+    if (status != IMG_OK) {
+        return status;
     }
     /* Ближайший сосед: для каждой точки нового изображения берём ближайшую
        точку старого. Умножение до деления. */
@@ -137,9 +142,8 @@ int image_resize(Image *image, int width, int height) {
                 image_get(image, x * image->width / width, y * image->height / height);
         }
     }
-    image_destroy(image);
-    *image = scaled;
-    return 1;
+    replace(image, &scaled);
+    return IMG_OK;
 }
 
 int image_offset(const Image *image, int x, int y) {
@@ -247,13 +251,13 @@ void image_brightness(Image *image, int delta) {
     pixels_brightness(image->pixels, image_pixel_count(image), delta);
 }
 
-int image_min_max(const Image *image, int *out_min, int *out_max) {
+ImgStatus image_min_max(const Image *image, int *out_min, int *out_max) {
     if (image == NULL || out_min == NULL || out_max == NULL) {
-        return 0;
+        return IMG_EARG;
     }
     int total = image_pixel_count(image);
     if (total <= 0) {
-        return 0;
+        return IMG_EARG; /* у пустого изображения нет ни минимума, ни максимума */
     }
 
     /* Начальные значения берём из первого пикселя, а не из нуля:
@@ -272,27 +276,5 @@ int image_min_max(const Image *image, int *out_min, int *out_max) {
     }
     *out_min = low;
     *out_max = high;
-    return 1;
-}
-
-int image_save_ppm(const Image *image, const char *path) {
-    FILE *file = fopen(path, "w");
-    if (file == NULL) {
-        return 0;
-    }
-    /* Заголовок: сигнатура, ширина и высота, максимальное значение канала. */
-    fprintf(file, "P3\n%d %d\n%d\n", image->width, image->height, CHANNEL_MAX);
-
-    /* Числа разделяются пробелами, строки изображения — переводом строки.
-       Без разделителей файл не откроет ни один просмотрщик. */
-    for (int y = 0; y < image->height; ++y) {
-        for (int x = 0; x < image->width; ++x) {
-            Pixel p = image_get(image, x, y);
-            fprintf(file, "%u %u %u ",
-                    (unsigned)pixel_red(p), (unsigned)pixel_green(p), (unsigned)pixel_blue(p));
-        }
-        fputc('\n', file);
-    }
-    fclose(file);
-    return 1;
+    return IMG_OK;
 }

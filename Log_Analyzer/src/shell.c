@@ -4,11 +4,12 @@
 #include <string.h>
 #include <time.h>
 
+#include "binlog.h"
 #include "generator.h"
 #include "level.h"
+#include "query.h"
 #include "shell.h"
 #include "sort.h"
-#include "text.h"
 #include "view.h"
 #include "stats.h"
 #include "timestamp.h"
@@ -19,6 +20,8 @@
 static void print_help(void) {
     printf("Available commands:\n");
     printf("  load <file>                - load a log\n");
+    printf("  bsave <file>               - save the parsed log in binary form\n");
+    printf("  bload <file>               - read a binary log\n");
     printf("  gen <file> <count> [seed]  - create a test log\n");
     printf("  count                      - number of records and lines\n");
     printf("  head                       - first ten records\n");
@@ -94,7 +97,7 @@ static int read_words(char *buffer, size_t size, char *words[], int max_words) {
 
 /* Демонстрация упаковки времени: порядок чисел совпадает с порядком моментов. */
 static void demo_time(void) {
-    static const int SAMPLES[][6] = {
+    static const DateTime SAMPLES[] = {
         { 2026, 3, 15, 23, 59, 59 },
         { 2026, 3, 16, 0, 0, 0 },
         { 2026, 12, 31, 23, 59, 59 },
@@ -104,29 +107,20 @@ static void demo_time(void) {
 
     Timestamp previous = TIMESTAMP_INVALID;
     for (size_t i = 0; i < count; ++i) {
-        const int *t = SAMPLES[i];
-        Timestamp value = timestamp_pack(t[0], t[1], t[2], t[3], t[4], t[5]);
-
-        int year = 0;
-        int month = 0;
-        int day = 0;
-        int hour = 0;
-        int minute = 0;
-        int second = 0;
-        timestamp_unpack(value, &year, &month, &day, &hour, &minute, &second);
-
+        const DateTime *m = &SAMPLES[i];
+        Timestamp value = timestamp_pack(m);
         printf("%04d-%02d-%02d %02d:%02d:%02d -> %lld -> ",
-               t[0], t[1], t[2], t[3], t[4], t[5], (long long)value);
-        printf("%04d-%02d-%02d %02d:%02d:%02d  hour %d\n",
-               year, month, day, hour, minute, second, timestamp_hour(value));
-
+               m->year, m->month, m->day, m->hour, m->minute, m->second, (long long)value);
+        timestamp_print(value);
+        printf("  hour %d\n", timestamp_hour(value));
         if (previous != TIMESTAMP_INVALID && value <= previous) {
             printf("  ERROR: order is broken\n");
         }
         previous = value;
     }
+    DateTime invalid = { 2026, 13, 1, 0, 0, 0 };
     printf("Invalid date 2026-13-01: %lld (expected %lld)\n",
-           (long long)timestamp_pack(2026, 13, 1, 0, 0, 0), (long long)TIMESTAMP_INVALID);
+           (long long)timestamp_pack(&invalid), (long long)TIMESTAMP_INVALID);
 }
 
 /* Разбор аргументов команды level. Возвращает новую маску. */
@@ -189,11 +183,13 @@ static void command_load(LogFile *log, char *words[], int count) {
         printf("Specify the file: load <file>\n");
         return;
     }
+    clock_t start = clock();
     LogStatus status = logfile_load(log, words[1]);
     if (status != LOG_OK) {
-        printf("Error: %s (%s)\n", logfile_status_text(status), words[1]);
+        printf("Error: %s (%s)\n", status_text(status), words[1]);
         return;
     }
+    printf("Parsed in %.3f s\n", (double)(clock() - start) / CLOCKS_PER_SEC);
     view_reset(); /* указатели смотрели на записи прежнего файла */
     print_load_report(log);
 }
@@ -217,8 +213,9 @@ static void command_gen(char *words[], int count) {
             return;
         }
     }
-    if (!generator_write(words[1], lines, (unsigned int)seed)) {
-        printf("Cannot create the file: %s\n", words[1]);
+    LogStatus status = generator_write(words[1], lines, (unsigned int)seed);
+    if (status != LOG_OK) {
+        printf("Cannot create %s: %s\n", words[1], status_text(status));
         return;
     }
     printf("Created %s: %ld lines, seed %lu\n", words[1], lines, seed);
@@ -259,29 +256,14 @@ static void command_sort(LogFile *log) {
     if (!require_log(log)) {
         return;
     }
-    int depth = sort_by_time(log);
-    if (depth == 0) {
-        printf("Not enough memory for sorting.\n");
+    int depth = 0;
+    LogStatus status = sort_by_time(log, &depth);
+    if (status != LOG_OK) {
+        printf("Cannot sort: %s\n", status_text(status));
         return;
     }
     view_reset(); /* записи переставлены, указатели смотрят не туда */
     printf("Records sorted: %ld, max recursion depth: %d\n", log->count, depth);
-}
-
-/* Разбирает «ГГГГ-ММ-ДД» и «чч:мм:сс» в момент времени.
-   Возвращает TIMESTAMP_INVALID, если разобрать не удалось. */
-static Timestamp parse_moment(const char *date, const char *time) {
-    int year = 0;
-    int month = 0;
-    int day = 0;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-    if (sscanf(date, "%d-%d-%d", &year, &month, &day) != 3
-        || sscanf(time, "%d:%d:%d", &hour, &minute, &second) != 3) {
-        return TIMESTAMP_INVALID;
-    }
-    return timestamp_pack(year, month, day, hour, minute, second);
 }
 
 static void command_since(LogFile *log, char *words[], int count) {
@@ -292,7 +274,7 @@ static void command_since(LogFile *log, char *words[], int count) {
         printf("Usage: since <YYYY-MM-DD> <hh:mm:ss>\n");
         return;
     }
-    Timestamp moment = parse_moment(words[1], words[2]);
+    Timestamp moment = timestamp_parse(words[1], words[2]);
     if (moment == TIMESTAMP_INVALID) {
         printf("Cannot parse the date and time\n");
         return;
@@ -330,7 +312,12 @@ static void command_order(const LogFile *log, char *words[], int count) {
             return;
         }
     }
-    printf("Pointers sorted: %ld, order %s.\n", view_sort(log, order), order_name(order));
+    LogStatus status = view_sort(log, order);
+    if (status != LOG_OK) {
+        printf("Cannot sort the pointers: %s\n", status_text(status));
+        return;
+    }
+    printf("Pointers sorted: %ld, order %s.\n", view_count(), order_name(order));
     printf("The records themselves did not move: head still shows them\n");
     printf("in the order they were read from the file.\n");
 }
@@ -344,21 +331,11 @@ static void command_view(const LogFile *log, char *words[], int count) {
         n = LOGFILE_SHOW;
     }
     /* Порядок ещё не выбран — по умолчанию по времени. */
-    if (view_count() == 0) {
-        view_sort(log, ORDER_TIME);
+    if (view_count() == 0 && view_sort(log, ORDER_TIME) != LOG_OK) {
+        printf("Not enough memory for the view.\n");
+        return;
     }
     view_print(n);
-}
-
-static void print_time(Timestamp value) {
-    int year = 0;
-    int month = 0;
-    int day = 0;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-    timestamp_unpack(value, &year, &month, &day, &hour, &minute, &second);
-    printf("%04d-%02d-%02d %02d:%02d:%02d", year, month, day, hour, minute, second);
 }
 
 static void command_span(const LogFile *log) {
@@ -372,9 +349,9 @@ static void command_span(const LogFile *log) {
         return;
     }
     printf("Earliest: ");
-    print_time(first);
+    timestamp_print(first);
     printf("\nLatest:   ");
-    print_time(last);
+    timestamp_print(last);
     printf("\n");
 }
 
@@ -386,7 +363,7 @@ static void command_cost(const LogFile *log) {
         return;
     }
     clock_t start = clock();
-    view_sort(log, ORDER_TIME);
+    LogStatus status = view_sort(log, ORDER_TIME);
     double by_pointers = (double)(clock() - start) / CLOCKS_PER_SEC;
 
     /* +1: malloc от нуля байт вправе вернуть NULL, а пустой журнал — не ошибка. */
@@ -400,13 +377,15 @@ static void command_cost(const LogFile *log) {
     }
     /* Тот же алгоритм, но переставляются сами записи, а не указатели. */
     start = clock();
-    int sorted = sort_records_for_cost(copy, log->count);
+    if (status == LOG_OK) {
+        status = sort_records_for_cost(copy, log->count);
+    }
     double by_records = (double)(clock() - start) / CLOCKS_PER_SEC;
     /* Освобождается только массив копий. Тексты записей не трогаем:
        они принадлежат журналу, а в копии лежат те же адреса. */
     free(copy);
-    if (!sorted) {
-        printf("Not enough memory for sorting.\n");
+    if (status != LOG_OK) {
+        printf("Cannot sort: %s\n", status_text(status));
         return;
     }
 
@@ -442,26 +421,8 @@ static void command_stress(const LogFile *log, char *words[], int count) {
     printf("Logs loaded and freed: %ld of %ld\n", loaded, times);
 }
 
-/* Условие выборки: функция получает запись и данные условия (образец,
-   имя модуля, границы интервала) и отвечает, подходит ли запись. */
-typedef int (*Match)(const LogRecord *record, const void *condition);
-
-/* Печатает первые LOGFILE_SHOW записей, которые проходят фильтр уровней
-   и условие match, и сообщает, сколько их всего. Все выборки учитывают
-   фильтр, заданный командой level: именно для этого он заводился
-   на практике 2. Один цикл на три команды — вместо трёх одинаковых. */
-static void print_matching(const LogFile *log, LevelMask mask, Match match,
-                           const void *condition) {
-    long found = 0;
-    for (long i = 0; i < log->count; ++i) {
-        const LogRecord *r = &log->records[i];
-        if (level_mask_has(mask, r->level) && match(r, condition)) {
-            if (found < LOGFILE_SHOW) {
-                logfile_print_record(r);
-            }
-            ++found;
-        }
-    }
+/* Итог выборки: сколько записей нашлось и сколько из них показано. */
+static void print_found(long found) {
     if (found == 0) {
         printf("Nothing found.\n");
     } else if (found > LOGFILE_SHOW) {
@@ -469,25 +430,6 @@ static void print_matching(const LogFile *log, LevelMask mask, Match match,
     } else {
         printf("Records found: %ld.\n", found);
     }
-}
-
-static int text_contains(const LogRecord *record, const void *condition) {
-    return text_find_ignore_case(record->text, condition) >= 0;
-}
-
-static int module_is(const LogRecord *record, const void *condition) {
-    return text_same_word(record->module, condition);
-}
-
-/* Границы интервала, обе включительно. */
-typedef struct {
-    Timestamp from;
-    Timestamp to;
-} Interval;
-
-static int time_inside(const LogRecord *record, const void *condition) {
-    const Interval *interval = condition;
-    return record->time >= interval->from && record->time <= interval->to;
 }
 
 static void command_grep(const LogFile *log, char *words[], int count, LevelMask mask) {
@@ -498,7 +440,7 @@ static void command_grep(const LogFile *log, char *words[], int count, LevelMask
         printf("Search for what? Example: grep timeout\n");
         return;
     }
-    print_matching(log, mask, text_contains, words[1]);
+    print_found(query_text(log, mask, words[1]));
 }
 
 static void command_module(const LogFile *log, char *words[], int count, LevelMask mask) {
@@ -509,7 +451,7 @@ static void command_module(const LogFile *log, char *words[], int count, LevelMa
         printf("Which module? Example: module net\n");
         return;
     }
-    print_matching(log, mask, module_is, words[1]);
+    print_found(query_module(log, mask, words[1]));
 }
 
 static void command_between(const LogFile *log, char *words[], int count, LevelMask mask) {
@@ -520,18 +462,53 @@ static void command_between(const LogFile *log, char *words[], int count, LevelM
         printf("Usage: between <YYYY-MM-DD> <hh:mm:ss> <YYYY-MM-DD> <hh:mm:ss>\n");
         return;
     }
-    Interval interval;
-    interval.from = parse_moment(words[1], words[2]);
-    interval.to = parse_moment(words[3], words[4]);
-    if (interval.from == TIMESTAMP_INVALID || interval.to == TIMESTAMP_INVALID) {
+    Timestamp from = timestamp_parse(words[1], words[2]);
+    Timestamp to = timestamp_parse(words[3], words[4]);
+    if (from == TIMESTAMP_INVALID || to == TIMESTAMP_INVALID) {
         printf("Cannot parse the date and time\n");
         return;
     }
-    if (interval.from > interval.to) {
+    if (from > to) {
         printf("The interval starts after it ends: no records.\n");
         return;
     }
-    print_matching(log, mask, time_inside, &interval);
+    print_found(query_interval(log, mask, from, to));
+}
+
+/* Практика 8: двоичный журнал. Сохранение и загрузка печатают время,
+   чтобы разницу с разбором текста было видно числами. */
+static void command_bsave(const LogFile *log, char *words[], int count) {
+    if (!require_log(log)) {
+        return;
+    }
+    if (count < 2) {
+        printf("Specify the file: bsave journal.bin\n");
+        return;
+    }
+    clock_t start = clock();
+    LogStatus status = binlog_save(log, words[1]);
+    if (status != LOG_OK) {
+        printf("Cannot save %s: %s\n", words[1], status_text(status));
+        return;
+    }
+    printf("Saved %ld records in %.3f s\n",
+           log->count, (double)(clock() - start) / CLOCKS_PER_SEC);
+}
+
+static void command_bload(LogFile *log, char *words[], int count) {
+    if (count < 2) {
+        printf("Specify the file: bload journal.bin\n");
+        return;
+    }
+    clock_t start = clock();
+    LogStatus status = binlog_load(log, words[1]);
+    if (status != LOG_OK) {
+        printf("Cannot read %s: %s\n", words[1], status_text(status));
+        return;
+    }
+    view_reset(); /* указатели смотрели на записи прежнего журнала */
+    printf("Read %ld records in %.3f s\n",
+           log->count, (double)(clock() - start) / CLOCKS_PER_SEC);
 }
 
 void shell_run(LogFile *log) {
@@ -560,6 +537,10 @@ void shell_run(LogFile *log) {
             /* Пустая строка — не ошибка: просто ждём следующую команду. */
         } else if (strcmp(name, "load") == 0) {
             command_load(log, words, count);
+        } else if (strcmp(name, "bsave") == 0) {
+            command_bsave(log, words, count);
+        } else if (strcmp(name, "bload") == 0) {
+            command_bload(log, words, count);
         } else if (strcmp(name, "gen") == 0) {
             command_gen(words, count);
         } else if (strcmp(name, "count") == 0) {

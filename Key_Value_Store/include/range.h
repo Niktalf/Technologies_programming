@@ -1,7 +1,7 @@
 #ifndef RANGE_H
 #define RANGE_H
 
-#include "store.h"
+#include "kvstore.h"
 
 /* Практика 4: упорядоченный обход и диапазонные запросы.
 
@@ -12,7 +12,10 @@
    в дереве поиска, а не в хеш-таблице.
 
    Практика 5: временные массивы выделяются на время запроса и сразу
-   освобождаются. Глобальных массивов в модуле нет. */
+   освобождаются. Глобальных массивов в модуле нет.
+
+   Практика 8: модуль стал клиентом библиотеки — пары он собирает
+   через kv_for_each и про устройство таблицы ничего не знает. */
 
 typedef void (*RangeVisitor)(const char *key, const char *value, void *context);
 
@@ -20,10 +23,10 @@ typedef void (*RangeVisitor)(const char *key, const char *value, void *context);
    в порядке возрастания ключей. Возвращает число найденных пар
    или -1, если не хватило памяти или аргументы неверны.
    Через depth_out сообщает наибольшую глубину рекурсии сортировки. */
-int range_query(const Store *store, const char *from, const char *to,
+int range_query(const KvStore *store, const char *from, const char *to,
                 RangeVisitor visit, void *context, int *depth_out);
 
 /* Все пары в порядке возрастания ключей. Возвращает то же, что range_query. */
-int range_all(const Store *store, RangeVisitor visit, void *context, int *depth_out);
+int range_all(const KvStore *store, RangeVisitor visit, void *context, int *depth_out);
 
 #endif /* RANGE_H */

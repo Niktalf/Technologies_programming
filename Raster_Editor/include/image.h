@@ -2,6 +2,7 @@
 #define IMAGE_H
 
 #include "pixel.h"
+#include "status.h"
 
 /* Практика 7: изображение произвольного размера в динамической памяти.
    Пиксели лежат одним блоком в куче, строка за строкой. Сам объект Image —
@@ -15,16 +16,19 @@ typedef struct {
     int height;
 } Image;
 
-/* Создаёт изображение, залитое чёрным. Возвращает 1 при успехе и 0,
-   если размеры неразумны, их произведение переполняется или памяти
-   не хватило; в этом случае pixels равен NULL. */
-int image_create(Image *image, int width, int height);
+/* Практика 8: функции, которые могут не справиться, возвращают код
+   из общего перечисления (status.h), а результат отдают через параметр.
+
+   Создаёт изображение, залитое чёрным. IMG_EARG, если размеры неразумны
+   или их произведение переполняется; IMG_ENOMEM, если памяти не хватило.
+   При ошибке pixels равен NULL. */
+ImgStatus image_create(Image *image, int width, int height);
 
 /* Освобождает блок пикселей и обнуляет указатель. Повторный вызов безопасен. */
 void image_destroy(Image *image);
 
 /* Создаёт destination как отдельную копию source со своим блоком пикселей. */
-int image_copy(Image *destination, const Image *source);
+ImgStatus image_copy(Image *destination, const Image *source);
 
 /* Смещение пикселя в блоке вычисляется только здесь.
    Номер строки умножается на ширину, а не на высоту. */
@@ -51,21 +55,17 @@ void image_invert(Image *image);
 void image_brightness(Image *image, int delta);
 
 /* Самая тёмная и самая светлая яркость: два результата через указатели,
-   признак успеха — обычным значением. */
-int image_min_max(const Image *image, int *out_min, int *out_max);
+   код — обычным значением. IMG_EARG для пустого изображения. */
+ImgStatus image_min_max(const Image *image, int *out_min, int *out_max);
 
 /* Обрезка и масштабирование ближайшим соседом: выделяется новый блок,
    старый освобождается. При неудаче изображение остаётся прежним. */
-int image_crop(Image *image, int x, int y, int width, int height);
-int image_resize(Image *image, int width, int height);
+ImgStatus image_crop(Image *image, int x, int y, int width, int height);
+ImgStatus image_resize(Image *image, int width, int height);
 
 /* Поворот по часовой стрелке на угол, кратный 90 градусам; отрицательный
    угол — против часовой. Тоже выделяет новый блок: при повороте на 90
-   ширина и высота меняются местами. Возвращает 1 при успехе. */
-int image_rotate(Image *image, int angle);
-
-/* Записывает изображение в текстовый формат PPM (P3).
-   Возвращает 1 при успехе и 0, если файл не открылся. */
-int image_save_ppm(const Image *image, const char *path);
+   ширина и высота меняются местами. IMG_EARG, если угол не кратен 90. */
+ImgStatus image_rotate(Image *image, int angle);
 
 #endif /* IMAGE_H */

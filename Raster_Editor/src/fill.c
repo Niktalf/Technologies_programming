@@ -59,11 +59,12 @@ static int visit(Image *image, PointStack *stack, int x, int y,
     return 1;
 }
 
-FillReport fill_region(Image *image, int x, int y, Pixel color) {
+FillReport fill_region(Image *image, int x, int y, const Color *new_color) {
     FillReport report = { 0, 0, 0 };
-    if (image == NULL || !image_inside(image, x, y)) {
+    if (image == NULL || new_color == NULL || !image_inside(image, x, y)) {
         return report;
     }
+    Pixel color = color_to_pixel(new_color);
     Pixel old_color = image_get(image, x, y);
     /* Заливка тем же цветом, что уже есть: перекрашенный пиксель не отличается
        от неперекрашенного, и заливка никогда бы не закончилась. */

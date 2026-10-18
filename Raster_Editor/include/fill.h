@@ -20,6 +20,7 @@ typedef struct {
     int failed;    /* не хватило памяти: заливка остановлена, часть не залита */
 } FillReport;
 
-FillReport fill_region(Image *image, int x, int y, Pixel color);
+/* Практика 8: цвет передаётся структурой по адресу. */
+FillReport fill_region(Image *image, int x, int y, const Color *color);
 
 #endif /* FILL_H */

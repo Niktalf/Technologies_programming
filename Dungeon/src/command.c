@@ -5,14 +5,6 @@
 
 #include "command.h"
 
-/* Дочитывает и выбрасывает остаток строки до перевода строки или конца ввода. */
-static void skip_rest_of_line(void) {
-    int c = getchar();
-    while (c != '\n' && c != EOF) {
-        c = getchar();
-    }
-}
-
 int command_read_line(char *line, int size) {
     if (line == NULL || size < 2) {
         return READ_END;
@@ -32,7 +24,13 @@ int command_read_line(char *line, int size) {
     }
     /* Перевода строки нет — строка длиннее буфера. Хвост дочитываем
        и выбрасываем, иначе он стал бы следующей командой. */
-    skip_rest_of_line();
+    {
+        int c = getchar();
+
+        while (c != '\n' && c != EOF) {
+            c = getchar();
+        }
+    }
     return READ_TOO_LONG;
 }
 
@@ -41,13 +39,14 @@ static int is_space(char c) {
 }
 
 int command_split(char *line, char *words[], int max_words) {
+    char *p = line;
+    int count = 0;
+
     if (line == NULL || words == NULL) {
         return 0;
     }
     /* Один проход указателем по строке. Длина не вычисляется вовсе:
        конец строки — это нулевой символ, на нём и останавливаемся. */
-    int count = 0;
-    char *p = line;
     while (*p != '\0') {
         while (is_space(*p)) {
             *p = '\0'; /* разделитель становится концом предыдущего слова */
@@ -70,10 +69,11 @@ void command_to_lower(char *word) {
     if (word == NULL) {
         return;
     }
-    for (char *p = word; *p != '\0'; ++p) {
-        if (*p >= 'A' && *p <= 'Z') {
-            *p = (char)(*p - 'A' + 'a');
+    while (*word != '\0') {
+        if (*word >= 'A' && *word <= 'Z') {
+            *word = (char)(*word - 'A' + 'a');
         }
+        ++word;
     }
 }
 
@@ -89,21 +89,28 @@ int command_is(const char *word, const char *full, const char *abbreviation) {
 }
 
 int command_parse_number(const char *word, int *out) {
-    if (out == NULL || word == NULL || *word == '\0') {
+    int value = 0;
+
+    if (out == NULL) {
         return NUMBER_MISSING;
     }
-    int value = 0;
-    for (const char *p = word; *p != '\0'; ++p) {
-        if (*p < '0' || *p > '9') {
+    if (word == NULL || *word == '\0') {
+        return NUMBER_MISSING;
+    }
+    while (*word != '\0') {
+        int digit;
+
+        if (*word < '0' || *word > '9') {
             return NUMBER_NOT_DIGIT;
         }
-        int digit = *p - '0'; /* код цифры минус код нуля — значение цифры */
+        digit = *word - '0'; /* код цифры минус код нуля — значение цифры */
         /* Проверка до умножения: после переполнения проверять уже нечего,
            а само переполнение знакового int — неопределённое поведение. */
         if (value > (INT_MAX - digit) / 10) {
             return NUMBER_TOO_BIG;
         }
         value = value * 10 + digit;
+        ++word;
     }
     *out = value;
     return NUMBER_OK;

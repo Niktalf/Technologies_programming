@@ -3,27 +3,6 @@
 
 #include "ppm.h"
 
-const char *ppm_status_text(PpmStatus status) {
-    switch (status) {
-    case PPM_OK:
-        return "success";
-    case PPM_ERR_OPEN:
-        return "cannot open the file";
-    case PPM_ERR_SIGNATURE:
-        return "not a P3 file";
-    case PPM_ERR_HEADER:
-        return "corrupted header";
-    case PPM_ERR_SIZE:
-        return "the image is too large";
-    case PPM_ERR_DATA:
-        return "corrupted data: the file is cut off or a value exceeds the maximum";
-    case PPM_ERR_MEMORY:
-        return "not enough memory";
-    default:
-        return "unknown error";
-    }
-}
-
 /* Больше этого числа в заголовке и данных PPM не бывает: стороны не больше
    IMAGE_MAX_SIDE, максимум канала — 65535. */
 #define PPM_NUMBER_MAX 1000000
@@ -65,7 +44,8 @@ static int read_number(FILE *file, int *out) {
         ++digits;
         c = fgetc(file);
     }
-    /* Символ после числа не наш: возвращаем его в поток. */
+    /* Символ после числа не наш: возвращаем его в поток. В P6 это тот самый
+       единственный пробел перед байтами данных. */
     if (c != EOF) {
         ungetc(c, file);
     }
@@ -77,90 +57,163 @@ static int read_number(FILE *file, int *out) {
 }
 
 /* Читает и проверяет заголовок: сигнатуру, размеры и максимум канала. */
-static PpmStatus read_header(FILE *file, int *width, int *height, int *maximum) {
+static ImgStatus read_header(FILE *file, PpmFormat *format, int *width, int *height,
+                             int *maximum) {
     skip_spaces_and_comments(file);
     char signature[3];
-    if (fscanf(file, "%2s", signature) != 1 || signature[0] != 'P' || signature[1] != '3') {
-        return PPM_ERR_SIGNATURE; /* двоичный P6 появится на практике 8 */
+    if (fscanf(file, "%2s", signature) != 1 || signature[0] != 'P'
+        || (signature[1] != '3' && signature[1] != '6')) {
+        return IMG_EFORMAT;
     }
+    *format = signature[1] == '6' ? PPM_BINARY : PPM_TEXT;
     if (!read_number(file, width) || !read_number(file, height) || !read_number(file, maximum)) {
-        return PPM_ERR_HEADER;
+        return IMG_EFORMAT;
     }
     if (*width <= 0 || *height <= 0 || *maximum <= 0 || *maximum > 65535) {
-        return PPM_ERR_HEADER;
+        return IMG_EFORMAT;
+    }
+    /* В двоичной разновидности при максимуме больше 255 канал занимает
+       два байта. Такие файлы редки, и мы их честно не поддерживаем. */
+    if (*format == PPM_BINARY && *maximum > CHANNEL_MAX) {
+        return IMG_EFORMAT;
     }
     /* Память выделяется под прочитанные размеры, но только после того,
        как они проверены: иначе испорченный заголовок попросит гигабайты. */
     if (*width > IMAGE_MAX_SIDE || *height > IMAGE_MAX_SIDE) {
-        return PPM_ERR_SIZE;
+        return IMG_EFORMAT;
     }
-    return PPM_OK;
+    /* В двоичном файле после максимума идёт ровно один пробельный символ,
+       а дальше сразу байты. Пропускать пробелы дальше нельзя: первый байт
+       данных может совпасть с кодом пробела. */
+    if (*format == PPM_BINARY && fgetc(file) == EOF) {
+        return IMG_ECORRUPT;
+    }
+    return IMG_OK;
 }
 
-/* Читает один канал и приводит его к диапазону 0..CHANNEL_MAX.
-   Значение больше объявленного максимума — испорченные данные. */
-static int read_channel(FILE *file, int maximum, uint8_t *out) {
-    int value = 0;
-    if (!read_number(file, &value) || value > maximum) {
+/* Читает три канала одного пикселя текстом или байтами.
+   Возвращает 0, если файл оборвался. */
+static int read_channels(FILE *file, PpmFormat format, int channels[3]) {
+    if (format == PPM_TEXT) {
+        return read_number(file, &channels[0]) && read_number(file, &channels[1])
+               && read_number(file, &channels[2]);
+    }
+    unsigned char bytes[3];
+    if (fread(bytes, 1, 3, file) != 3) {
         return 0;
     }
-    /* Если максимум не 255, значение масштабируется.
-       Умножение до деления: иначе всё станет нулём. */
-    if (maximum != CHANNEL_MAX) {
-        value = value * CHANNEL_MAX / maximum;
+    for (int i = 0; i < 3; ++i) {
+        channels[i] = bytes[i];
     }
-    *out = channel_clamp(value);
     return 1;
 }
 
+/* Приводит канал к диапазону 0..CHANNEL_MAX. Умножение до деления:
+   иначе всё станет нулём. */
+static uint8_t scale_channel(int value, int maximum) {
+    if (maximum != CHANNEL_MAX) {
+        value = value * CHANNEL_MAX / maximum;
+    }
+    return channel_clamp(value);
+}
+
 /* Читает пиксели в image, размеры которого уже выставлены. */
-static PpmStatus read_pixels(FILE *file, Image *image, int maximum) {
+static ImgStatus read_pixels(FILE *file, PpmFormat format, int maximum, Image *image) {
     for (int y = 0; y < image->height; ++y) {
         for (int x = 0; x < image->width; ++x) {
-            uint8_t red = 0;
-            uint8_t green = 0;
-            uint8_t blue = 0;
-            /* Файл оборван на середине или значение больше максимума. */
-            if (!read_channel(file, maximum, &red) || !read_channel(file, maximum, &green)
-                || !read_channel(file, maximum, &blue)) {
-                return PPM_ERR_DATA;
+            int c[3];
+            /* Файл оборван или значение больше объявленного максимума. */
+            if (!read_channels(file, format, c)
+                || c[0] > maximum || c[1] > maximum || c[2] > maximum) {
+                return IMG_ECORRUPT;
             }
-            image_set(image, x, y, pixel_pack(red, green, blue));
+            Color color = { scale_channel(c[0], maximum), scale_channel(c[1], maximum),
+                            scale_channel(c[2], maximum) };
+            image_set(image, x, y, color_to_pixel(&color));
         }
     }
-    return PPM_OK;
+    return IMG_OK;
 }
 
 /* Файл открывается и закрывается здесь, в одном месте; всё чтение —
    во вспомогательных функциях, которые на ошибке просто возвращают код.
-   Так fclose не приходится повторять перед каждым return.
 
    Читаем во временное изображение, а в целевое переносим только при успехе:
    оборванный файл не должен портить то, что уже открыто. */
-PpmStatus ppm_load(Image *image, const char *path) {
-    FILE *file = fopen(path, "r");
+ImgStatus ppm_load(Image *image, const char *path, PpmFormat *out_format) {
+    if (image == NULL || path == NULL) {
+        return IMG_EARG;
+    }
+    /* Двоичный режим всегда: для P6 он обязателен, потому что в текстовом
+       некоторые системы портят байты, совпадающие с кодом перевода строки.
+       Для P3 он безвреден. */
+    FILE *file = fopen(path, "rb");
     if (file == NULL) {
-        return PPM_ERR_OPEN;
+        return IMG_EOPEN;
     }
 
+    PpmFormat format = PPM_TEXT;
     int width = 0;
     int height = 0;
     int maximum = 0;
     Image loaded = { NULL, 0, 0 };
-    PpmStatus status = read_header(file, &width, &height, &maximum);
-    if (status == PPM_OK && !image_create(&loaded, width, height)) {
-        status = PPM_ERR_MEMORY;
+    ImgStatus status = read_header(file, &format, &width, &height, &maximum);
+    if (status == IMG_OK) {
+        status = image_create(&loaded, width, height);
     }
-    if (status == PPM_OK) {
-        status = read_pixels(file, &loaded, maximum);
+    if (status == IMG_OK) {
+        status = read_pixels(file, format, maximum, &loaded);
     }
-    fclose(file);
+    fclose(file); /* файл открыт на чтение: потерять при закрытии нечего */
 
-    if (status != PPM_OK) {
+    if (status != IMG_OK) {
         image_destroy(&loaded); /* за собой убираем и при ошибке */
         return status;
     }
     image_destroy(image); /* прежнее изображение освобождается */
     *image = loaded;
-    return PPM_OK;
+    if (out_format != NULL) {
+        *out_format = format;
+    }
+    return IMG_OK;
+}
+
+/* Пишет один пиксель текстом или тремя байтами. Возвращает 1 при успехе. */
+static int write_pixel(FILE *file, PpmFormat format, Pixel pixel) {
+    Color c = pixel_to_color(pixel);
+    if (format == PPM_TEXT) {
+        return fprintf(file, "%u %u %u ", (unsigned)c.red, (unsigned)c.green,
+                       (unsigned)c.blue) >= 0;
+    }
+    unsigned char bytes[3] = { c.red, c.green, c.blue };
+    return fwrite(bytes, 1, 3, file) == 3;
+}
+
+ImgStatus ppm_save(const Image *image, const char *path, PpmFormat format) {
+    if (image == NULL || image->pixels == NULL || path == NULL) {
+        return IMG_EARG;
+    }
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) {
+        return IMG_EOPEN;
+    }
+    /* Заголовок: сигнатура, ширина и высота, максимальное значение канала. */
+    int ok = fprintf(file, "P%c\n%d %d\n%d\n", format == PPM_BINARY ? '6' : '3',
+                     image->width, image->height, CHANNEL_MAX) >= 0;
+    /* В тексте числа разделяются пробелами, строки изображения — переводом
+       строки. Без разделителей файл не откроет ни один просмотрщик. */
+    for (int y = 0; y < image->height && ok; ++y) {
+        for (int x = 0; x < image->width && ok; ++x) {
+            ok = write_pixel(file, format, image_get(image, x, y));
+        }
+        if (ok && format == PPM_TEXT) {
+            ok = fputc('\n', file) != EOF;
+        }
+    }
+    /* Часть ошибок записи видна только при закрытии: буфер уходит на диск
+       именно тогда. */
+    if (fclose(file) != 0 || !ok) {
+        return IMG_EWRITE;
+    }
+    return IMG_OK;
 }

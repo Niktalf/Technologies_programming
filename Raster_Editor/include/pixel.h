@@ -17,6 +17,20 @@ typedef uint32_t Pixel;
 
 #define CHANNEL_MAX 255
 
+/* Практика 8: цвет как структура из трёх каналов. Пиксель по-прежнему
+   хранится упакованным — так изображение занимает меньше памяти, —
+   а структура нужна там, где цвет передают и разбирают: вместо трёх
+   отдельных параметров в функцию передаётся адрес одной структуры. */
+typedef struct {
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+} Color;
+
+/* Перевод между структурой и упакованным пикселем. */
+Pixel color_to_pixel(const Color *color);
+Color pixel_to_color(Pixel pixel);
+
 /* Упаковка и извлечение. Реализованы сдвигами и масками, а не делением. */
 Pixel pixel_pack(uint8_t red, uint8_t green, uint8_t blue);
 uint8_t pixel_red(Pixel pixel);

@@ -76,14 +76,18 @@ static void merge_sort(LogRecord *records, long left, long right, int depth, int
     merge(records, left, middle, right);
 }
 
-int sort_by_time(LogFile *log) {
+LogStatus sort_by_time(LogFile *log, int *out_depth) {
+    if (log == NULL || out_depth == NULL) {
+        return LOG_ERR_ARG;
+    }
     if (!reserve_buffer(log->count)) {
-        return 0;
+        return LOG_ERR_MEMORY;
     }
     int max_depth = 0;
     merge_sort(log->records, 0, log->count, 1, &max_depth);
     log->sorted = 1;
-    return max_depth;
+    *out_depth = max_depth;
+    return LOG_OK;
 }
 
 /* Ищет в полуинтервале [low, high). Инвариант: все записи левее low
@@ -108,11 +112,14 @@ long search_not_before(const LogFile *log, Timestamp moment) {
     return lower_bound(log->records, 0, log->count, moment);
 }
 
-int sort_records_for_cost(LogRecord *records, long count) {
+LogStatus sort_records_for_cost(LogRecord *records, long count) {
+    if (records == NULL && count > 0) {
+        return LOG_ERR_ARG;
+    }
     if (!reserve_buffer(count)) {
-        return 0;
+        return LOG_ERR_MEMORY;
     }
     int depth = 0;
     merge_sort(records, 0, count, 1, &depth);
-    return 1;
+    return LOG_OK;
 }
