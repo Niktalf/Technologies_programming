@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
     }
 
     LogFile log;
-    LogStatus status = logfile_scan(&log, argv[1]);
+    LogStatus status = logfile_scan(&log, argv[1], LEVEL_MASK_ALL);
     if (status != LOG_OK) {
         fprintf(stderr, "Error: %s (%s)\n", logfile_status_text(status), argv[1]);
         return 1;

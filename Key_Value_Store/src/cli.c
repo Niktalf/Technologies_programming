@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "cli.h"
+#include "record.h"
 
 #define CLI_LINE_MAX 256
 #define CLI_ARGS_MAX 8
@@ -16,6 +17,7 @@ void cli_print_help(void) {
     printf("  get <key>          - get the value\n");
     printf("  del <key>          - delete the pair\n");
     printf("  list               - list all pairs\n");
+    printf("  record <key> <val> - build a journal record and check it\n");
     printf("  help               - this list\n");
     printf("  quit               - exit\n");
 }
@@ -80,6 +82,60 @@ static void command_list(const Store *store) {
     }
 }
 
+/* Печатает байты буфера шестнадцатеричными числами. */
+static void print_bytes(const uint8_t *buffer, size_t size) {
+    printf("Bytes:");
+    for (size_t i = 0; i < size; ++i) {
+        printf(" %02X", (unsigned)buffer[i]);
+    }
+    printf("\n");
+}
+
+/* Практика 2: сборка записи журнала, разбор и обнаружение порчи.
+   Настоящая запись в файл появится на практике 8. */
+static void command_record(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("record needs a key and a value\n");
+        return;
+    }
+    const char *key = argv[1];
+    const char *value = argv[2];
+
+    uint8_t buffer[512];
+    size_t size = 0;
+    RecordStatus status = record_build(buffer, sizeof buffer,
+                                       record_flags_set(0, RECORD_FLAG_PUT), key, value, &size);
+    if (status != RECORD_OK) {
+        printf("Build error: %s\n", record_status_text(status));
+        return;
+    }
+    printf("Record size: %zu bytes (header %d + key %zu + value %zu)\n",
+           size, RECORD_HEADER_SIZE, strlen(key), strlen(value));
+    print_bytes(buffer, size);
+
+    RecordHeader header;
+    status = record_parse(buffer, size, &header);
+    printf("Parse: %s\n", record_status_text(status));
+    record_flags_print(header.flags);
+    printf("Key length: %u, value length: %u, checksum: 0x%02X\n",
+           (unsigned)header.key_length, (unsigned)header.value_length,
+           (unsigned)header.checksum);
+
+    /* Порча байта данных: длина сходится, порчу ловит контрольная сумма.
+       Повторное исключающее ИЛИ с той же маской возвращает байт обратно. */
+    buffer[size - 1] ^= 0x01u;
+    status = record_parse(buffer, size, &header);
+    printf("After corrupting the last byte: %s\n", record_status_text(status));
+    buffer[size - 1] ^= 0x01u;
+
+    /* Порча длины ключа: её ловит проверка размера, которая стоит раньше,
+       потому что по длине мы будем читать файл. */
+    buffer[2] ^= 0x01u;
+    status = record_parse(buffer, size, &header);
+    printf("After corrupting the key length: %s\n", record_status_text(status));
+    buffer[2] ^= 0x01u;
+}
+
 int cli_execute(Store *store, int argc, char *argv[]) {
     if (argc == 0) {
         return 1;
@@ -93,6 +149,8 @@ int cli_execute(Store *store, int argc, char *argv[]) {
         command_del(store, argc, argv);
     } else if (strcmp(name, "list") == 0) {
         command_list(store);
+    } else if (strcmp(name, "record") == 0) {
+        command_record(argc, argv);
     } else if (strcmp(name, "help") == 0) {
         cli_print_help();
     } else if (strcmp(name, "quit") == 0 || strcmp(name, "exit") == 0) {

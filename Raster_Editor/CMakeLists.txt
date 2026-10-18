@@ -9,6 +9,7 @@ add_library(
         src/commands.c
         src/editor.c
         src/input.c
+        src/pixel.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
