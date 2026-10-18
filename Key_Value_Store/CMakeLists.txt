@@ -7,8 +7,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_library(
         ${PROJECT_NAME}_core
         src/cli.c
+        src/parser.c
         src/range.c
         src/record.c
+        src/script.c
         src/session.c
         src/store.c
 )

@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "image.h"
 
@@ -163,5 +164,63 @@ int image_save_ppm(const Image *image, const char *path) {
         fputc('\n', file);
     }
     fclose(file);
+    return 1;
+}
+
+int image_crop(Image *image, int x, int y, int width, int height) {
+    if (image == NULL) {
+        return 0;
+    }
+    if (x < 0 || y < 0 || width <= 0 || height <= 0
+        || x > image->width - width || y > image->height - height) {
+        return 0; /* прямоугольник должен лежать внутри изображения */
+    }
+    /* Строки переезжают к началу массива по одной. Новое место строки
+       никогда не правее старого, поэтому, идя сверху вниз, мы не затираем
+       то, что ещё не скопировано. Области могут перекрываться, поэтому
+       memmove, а не memcpy. */
+    for (int row = 0; row < height; ++row) {
+        memmove(&image->pixels[row * width],
+                &image->pixels[(y + row) * image->width + x],
+                (size_t)width * sizeof(Pixel));
+    }
+    image->width = width;
+    image->height = height;
+    return 1;
+}
+
+int image_rotate(Image *image, int angle, Image *scratch) {
+    if (image == NULL || scratch == NULL || angle % 90 != 0) {
+        return 0;
+    }
+    /* Число четвертей оборота от 0 до 3: -90 — это то же, что 270. */
+    int turns = ((angle / 90) % 4 + 4) % 4;
+    if (turns == 0) {
+        return 1;
+    }
+    int width = image->width;
+    int height = image->height;
+    scratch->width = turns == 2 ? width : height;
+    scratch->height = turns == 2 ? height : width;
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            Pixel color = image_get(image, x, y);
+            if (turns == 1) {
+                /* 90 по часовой: столбец становится строкой */
+                image_set(scratch, height - 1 - y, x, color);
+            } else if (turns == 2) {
+                /* 180: отражение по обеим осям */
+                image_set(scratch, width - 1 - x, height - 1 - y, color);
+            } else {
+                /* 270 по часовой, то есть 90 против */
+                image_set(scratch, y, width - 1 - x, color);
+            }
+        }
+    }
+    memcpy(image->pixels, scratch->pixels,
+           (size_t)scratch->width * (size_t)scratch->height * sizeof(Pixel));
+    image->width = scratch->width;
+    image->height = scratch->height;
     return 1;
 }

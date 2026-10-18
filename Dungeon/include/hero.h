@@ -38,4 +38,21 @@ void hero_damage(int *hp, int amount);
    Возвращает 1, если золото было. */
 int hero_pick_gold(char map[][MAP_COLS], int x, int y, unsigned int *gold);
 
+/* Практика 6: предметы в сумке героя. Сумка — массив номеров предметов
+   фиксированной вместимости и счётчик заполненных мест. */
+#define ITEM_POTION   1 /* зелье: +10 здоровья */
+#define ITEM_ANTIDOTE 2 /* противоядие: снимает отравление */
+#define ITEM_TORCH    3 /* факел: снимает слепоту */
+
+#define INVENTORY_SIZE 8
+#define POTION_HEAL    10
+
+const char *hero_item_name(int item);
+
+/* Применяет предмет с номером number в сумке (нумерация с единицы,
+   как видит игрок) и убирает его из сумки. Возвращает 1, если предмет
+   с таким номером был. */
+int hero_use_item(int items[], int *item_count, int number,
+                  int *hp, int hp_max, unsigned int *states);
+
 #endif /* HERO_H */

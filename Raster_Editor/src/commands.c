@@ -1,4 +1,6 @@
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -8,6 +10,7 @@
 #include "commands.h"
 #include "fill.h"
 #include "pixel.h"
+#include "ppm.h"
 
 /* Сравнивает имя команды без учёта регистра.
    В интерактивном режиме имя уже приведено к нижнему регистру,
@@ -21,12 +24,20 @@ static int is_command(const char *word, const char *name) {
     return word[i] == '\0' && name[i] == '\0';
 }
 
-/* Разбирает целое число. Возвращает 1, если в слове число и только оно. */
+/* Разбирает целое число. Возвращает 1, если в слове число и только оно
+   и оно помещается в int. */
 static int parse_int(const char *word, int *out) {
+    /* strtol сообщает о переполнении через errno, а не возвращаемым
+       значением, поэтому errno обнуляется до вызова. Знак «+» и «-»
+       strtol понимает сам. */
     char *end = NULL;
+    errno = 0;
     long value = strtol(word, &end, 10);
     if (end == word || *end != '\0') {
-        return 0;
+        return 0; /* пустое слово или после числа есть что-то ещё */
+    }
+    if (errno == ERANGE || value < INT_MIN || value > INT_MAX) {
+        return 0; /* число не помещается в int */
     }
     *out = (int)value;
     return 1;
@@ -40,11 +51,14 @@ void commands_print_help(void) {
     printf("  gen stripes [count]      - color stripes, 8 by default\n");
     printf("  invert                   - invert\n");
     printf("  bright <number>          - brightness, e.g. bright 40 or bright -40\n");
+    printf("  crop <x> <y> <w> <h>     - crop\n");
+    printf("  rotate <angle>           - rotate by a multiple of 90 degrees\n");
     printf("  fill <x> <y> <r> <g> <b> - fill an area with a color\n");
     printf("  filltest                 - fill on checker, gradient and a plain image\n");
     printf("  minmax                   - the darkest and the brightest point\n");
     printf("  walk                     - invert by walking a pointer\n");
     printf("  demo                     - copy vs address: the cost of passing\n");
+    printf("  load <file>              - read a PPM\n");
     printf("  save <file>              - write to PPM\n");
     printf("  colors                   - check the color operations\n");
     printf("  help                     - this list\n");
@@ -73,6 +87,10 @@ static void do_gen(Editor *editor, const Words *words) {
         return;
     }
 
+    /* Генератор рисует на изображении полного размера: после load или crop
+       ширина и высота могли уменьшиться, и без этого картинка получилась бы
+       маленькой. */
+    image_init(&editor->image);
     const char *kind = words->word[1];
     if (is_command(kind, "gradient")) {
         image_gradient(&editor->image);
@@ -100,13 +118,79 @@ static void do_bright(Editor *editor, const Words *words) {
     if (!require_image(editor)) {
         return;
     }
-    int delta = 0;
-    if (words->count < 2 || !parse_int(words->word[1], &delta)) {
+    if (words->count < 2) {
         printf("Specify a number, e.g. bright 40\n");
+        return;
+    }
+    if (words->count > 2) {
+        printf("Too many arguments: bright takes one number\n");
+        return;
+    }
+    int delta = 0;
+    if (!parse_int(words->word[1], &delta)) {
+        printf("Not a number: %s. Example: bright 40 or bright -40\n", words->word[1]);
         return;
     }
     image_brightness(&editor->image, delta);
     printf("Brightness changed by %d.\n", delta);
+}
+
+static void do_crop(Editor *editor, const Words *words) {
+    if (!require_image(editor)) {
+        return;
+    }
+    if (words->count != 5) {
+        printf("Usage: crop <x> <y> <width> <height>\n");
+        return;
+    }
+    int v[4];
+    for (int i = 0; i < 4; ++i) {
+        if (!parse_int(words->word[i + 1], &v[i])) {
+            printf("Not a number: %s\n", words->word[i + 1]);
+            return;
+        }
+    }
+    if (!image_crop(&editor->image, v[0], v[1], v[2], v[3])) {
+        printf("Crop failed: the rectangle must lie inside the image.\n");
+        return;
+    }
+    printf("Cropped to %d x %d\n", editor->image.width, editor->image.height);
+}
+
+static void do_rotate(Editor *editor, const Words *words) {
+    if (!require_image(editor)) {
+        return;
+    }
+    if (words->count != 2) {
+        printf("Usage: rotate <angle>, a multiple of 90: rotate 90, rotate -90\n");
+        return;
+    }
+    int angle = 0;
+    if (!parse_int(words->word[1], &angle)) {
+        printf("Not a number: %s\n", words->word[1]);
+        return;
+    }
+    if (!image_rotate(&editor->image, angle, &editor->scratch)) {
+        printf("The angle must be a multiple of 90 degrees.\n");
+        return;
+    }
+    printf("Rotated by %d. Size: %d x %d\n", angle, editor->image.width, editor->image.height);
+}
+
+static void do_load(Editor *editor, const Words *words) {
+    if (words->count < 2) {
+        printf("Specify the file name: load <file>\n");
+        return;
+    }
+    const char *path = words->word[1];
+    PpmStatus status = ppm_load(&editor->image, path);
+    if (status != PPM_OK) {
+        printf("Cannot read %s: %s\n", path, ppm_status_text(status));
+        return;
+    }
+    editor->loaded = 1;
+    editor_set_path(editor, path);
+    printf("Read: %s, size %d x %d\n", path, editor->image.width, editor->image.height);
 }
 
 /* Печатает итог заливки. */
@@ -264,6 +348,10 @@ int commands_execute(Editor *editor, const Words *words) {
         do_invert(editor);
     } else if (is_command(name, "bright")) {
         do_bright(editor, words);
+    } else if (is_command(name, "crop")) {
+        do_crop(editor, words);
+    } else if (is_command(name, "rotate")) {
+        do_rotate(editor, words);
     } else if (is_command(name, "fill")) {
         do_fill(editor, words);
     } else if (is_command(name, "filltest")) {
@@ -274,6 +362,8 @@ int commands_execute(Editor *editor, const Words *words) {
         do_walk(editor);
     } else if (is_command(name, "demo")) {
         do_demo(editor);
+    } else if (is_command(name, "load")) {
+        do_load(editor, words);
     } else if (is_command(name, "save")) {
         do_save(editor, words);
     } else if (is_command(name, "colors")) {
