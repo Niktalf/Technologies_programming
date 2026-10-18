@@ -8,7 +8,7 @@
    записываются адреса начал слов. Ничего не копируется, и каждое слово —
    готовая строка C с нулём на конце. */
 
-#define LINE_SIZE  128   /* 126 символов, перевод строки и завершающий ноль */
+#define LINE_SIZE  128 /* 126 символов, перевод строки и завершающий ноль */
 #define WORDS_MAX  8
 
 /* Результат чтения строки. */
@@ -32,9 +32,9 @@ int command_is(const char *word, const char *full, const char *abbreviation);
 
 /* Результат перевода слова в число. */
 #define NUMBER_OK        0
-#define NUMBER_MISSING   1   /* аргумента нет */
-#define NUMBER_NOT_DIGIT 2   /* в слове есть не цифра */
-#define NUMBER_TOO_BIG   3   /* не помещается в int */
+#define NUMBER_MISSING   1 /* аргумента нет */
+#define NUMBER_NOT_DIGIT 2 /* в слове есть не цифра */
+#define NUMBER_TOO_BIG   3 /* не помещается в int */
 
 /* Переводит слово из цифр в неотрицательное число, проходя по символам.
    Возвращает один из кодов NUMBER_*; число — через *out. */
