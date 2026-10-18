@@ -6,8 +6,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_library(
         ${PROJECT_NAME}_core
+        src/level.c
         src/logfile.c
         src/shell.c
+        src/timestamp.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
