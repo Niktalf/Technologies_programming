@@ -40,6 +40,8 @@ void cli_print_help(void) {
     printf("  sizes              - why the store is passed by address\n");
     printf("  script <file> [stop] - run commands from a file\n");
     printf("  genscript <file> <n> - write a script of n put commands\n");
+    printf("  stress <n> <script>  - n times: create a store, load a script, close\n");
+    printf("  close              - close the current store and open an empty one\n");
     printf("  help               - this list\n");
     printf("  quit               - exit\n");
 }
@@ -146,6 +148,7 @@ static void print_stats(const Store *store) {
     printf("Cells marked as deleted: %d\n", stats.deleted);
     printf("Keys not in their home cell: %d\n", stats.displaced);
     printf("Longest probe chain: %d\n", stats.longest_probe);
+    printf("Table rebuilds: %ld\n", stats.rehash_count);
 }
 
 static double seconds_since(clock_t start) {
@@ -160,7 +163,7 @@ static long search_all(const Store *store, long n,
     long found = 0;
     clock_t start = clock();
     for (long i = 0; i < n; ++i) {
-        char key[STORE_KEY_MAX];
+        char key[32];
         snprintf(key, sizeof key, "key%ld", i);
         const char *value = NULL;
         if (get(store, key, &value) == STORE_OK) {
@@ -171,41 +174,30 @@ static long search_all(const Store *store, long n,
     return found;
 }
 
-/* Хранилище для опытов отдельное, чтобы не засорять пользовательское.
-   Оно весит мегабайты, поэтому лежит в куче, а не в стеке, и живёт ровно
-   столько, сколько длится опыт. Вызывающий освобождает его через free. */
-static Store *new_scratch_store(void) {
-    Store *scratch = malloc(sizeof *scratch);
-    if (scratch == NULL) {
-        printf("Not enough memory\n");
-        return NULL;
-    }
-    store_init(scratch);
-    return scratch;
-}
-
-/* Кладёт n ключей и ищет каждый двумя способами. */
+/* Кладёт n ключей и ищет каждый двумя способами. Хранилище для замеров
+   отдельное, чтобы не засорять пользовательское. Сама структура маленькая —
+   таблица в куче, — поэтому она локальная; таблица растёт сама. */
 static int command_bench(int argc, char *argv[]) {
-    const long limit = STORE_CAPACITY * 9 / 10;
     long n = argc >= 2 ? strtol(argv[1], NULL, 10) : 10000;
-    if (n <= 0 || n > limit) {
-        printf("The number of keys must be from 1 to %ld\n", limit);
+    if (n <= 0) {
+        printf("The number of keys must be positive\n");
         return CLI_ERROR;
     }
-    Store *bench = new_scratch_store();
-    if (bench == NULL) {
+    Store bench;
+    if (!store_init(&bench)) {
+        printf("Not enough memory\n");
         return CLI_ERROR;
     }
     for (long i = 0; i < n; ++i) {
-        char key[STORE_KEY_MAX];
+        char key[32];
         snprintf(key, sizeof key, "key%ld", i);
-        store_put(bench, key, "v", NULL);
+        store_put(&bench, key, "v", NULL);
     }
 
     double t_hash = 0.0;
-    long found_hash = search_all(bench, n, store_get, &t_hash);
+    long found_hash = search_all(&bench, n, store_get, &t_hash);
     double t_linear = 0.0;
-    long found_linear = search_all(bench, n, store_get_linear, &t_linear);
+    long found_linear = search_all(&bench, n, store_get_linear, &t_linear);
 
     printf("Keys: %ld\n", n);
     printf("Hash:    found %ld in %.4f s\n", found_hash, t_hash);
@@ -213,47 +205,51 @@ static int command_bench(int argc, char *argv[]) {
     if (t_hash > 0.0) {
         printf("Hash is %.0f times faster\n", t_linear / t_hash);
     }
-    print_stats(bench);
-    free(bench);
+    print_stats(&bench);
+    store_destroy(&bench);
     return CLI_OK;
 }
 
 /* Подбирает два ключа с одной домашней ячейкой, кладёт оба, удаляет первый
    и ищет второй. Если удалённую ячейку пометить пустой, второй не найдётся. */
 static int command_collide(void) {
+    /* Ключи подбираются уже в том хранилище, где будут лежать:
+       номер домашней ячейки зависит от размера таблицы. */
+    Store scratch;
+    if (!store_init(&scratch)) {
+        printf("Not enough memory\n");
+        return CLI_ERROR;
+    }
     const char *first = "a0";
-    int home = store_home(first);
+    int home = store_home(&scratch, first);
 
     /* Перебираем a1, a2, … пока не найдём ключ с той же домашней ячейкой. */
-    char second[STORE_KEY_MAX] = "";
+    char second[32] = "";
     int found = 0;
     for (long i = 1; i < 1000000 && !found; ++i) {
         snprintf(second, sizeof second, "a%ld", i);
-        found = store_home(second) == home;
+        found = store_home(&scratch, second) == home;
     }
     if (!found) {
         printf("Could not find a collision.\n");
+        store_destroy(&scratch);
         return CLI_OK;
     }
 
-    Store *scratch = new_scratch_store();
-    if (scratch == NULL) {
-        return CLI_ERROR;
-    }
-    store_put(scratch, first, "first", NULL);
-    store_put(scratch, second, "second", NULL);
+    store_put(&scratch, first, "first", NULL);
+    store_put(&scratch, second, "second", NULL);
     printf("Keys %s and %s fall into the same cell %d.\n", first, second, home);
 
-    store_remove(scratch, first);
+    store_remove(&scratch, first);
     printf("Deleted %s.\n", first);
 
     const char *value = NULL;
-    if (store_get(scratch, second, &value) == STORE_OK) {
+    if (store_get(&scratch, second, &value) == STORE_OK) {
         printf("Key %s found: %s\n", second, value);
     } else {
         printf("Key %s is lost: the deleted cell broke the probe chain.\n", second);
     }
-    free(scratch);
+    store_destroy(&scratch);
     return CLI_OK;
 }
 
@@ -354,8 +350,9 @@ static int command_copy(Session *session, int argc, char *argv[]) {
 static int command_sizes(void) {
     printf("Store size: %u bytes\n", (unsigned)sizeof(Store));
     printf("Pointer size: %u bytes\n", (unsigned)sizeof(Store *));
-    printf("The store cannot be passed by value: a 2.7 MB copy\n");
-    printf("would not fit on the stack, and changes to it would be lost anyway.\n");
+    printf("The structure itself is small now: the table, keys and values are on the heap.\n");
+    printf("But it still cannot be passed by value: the copy would share\n");
+    printf("one table with the original, and changes to one would break the other.\n");
     return CLI_OK;
 }
 
@@ -400,6 +397,85 @@ static int command_script(Session *session, int argc, char *argv[]) {
     /* Ошибки внутри скрипта уже сообщены с номерами строк; сама команда
        script выполнилась, даже если скрипт был с ошибками. */
     script_run(session, argv[1], stop);
+    return CLI_OK;
+}
+
+/* Заливает в хранилище все команды put из скрипта, ничего не печатая:
+   при ста повторах вывод каждой команды занял бы миллион строк.
+   Возвращает число залитых пар или -1, если файл не открылся. */
+static long fill_from_script(Store *store, const char *path) {
+    FILE *file = fopen(path, "r");
+    if (file == NULL) {
+        return -1;
+    }
+    long added = 0;
+    char line[CLI_LINE_MAX];
+    while (fgets(line, (int)sizeof line, file) != NULL) {
+        char *argv[PARSER_ARGS_MAX];
+        int argc = 0;
+        int parsed = parser_split(line, argv, PARSER_ARGS_MAX, &argc) == PARSER_OK;
+        if (parsed && argc >= 3 && strcmp(argv[0], "put") == 0
+            && store_put(store, argv[1], argv[2], NULL) == STORE_OK) {
+            ++added;
+        }
+    }
+    fclose(file);
+    return added;
+}
+
+/* Много раз подряд: создать хранилище, залить в него скрипт, закрыть.
+   Если хоть что-то не освобождается, потребление памяти растёт с каждым
+   повтором, а санитайзер в конце назовёт место утечки. */
+static int command_stress(int argc, char *argv[]) {
+    if (argc < 3) {
+        printf("stress needs a repeat count and a script: stress 100 pairs1000.kv\n");
+        return CLI_ERROR;
+    }
+    long times = strtol(argv[1], NULL, 10);
+    if (times <= 0) {
+        printf("The repeat count must be positive\n");
+        return CLI_ERROR;
+    }
+    const char *script = argv[2];
+    long done = 0;
+    long pairs = 0;
+    int failed = 0;
+    for (long i = 0; i < times && !failed; ++i) {
+        Store temp;
+        if (!store_init(&temp)) {
+            printf("Not enough memory\n");
+            failed = 1;
+        } else {
+            pairs = fill_from_script(&temp, script);
+            if (pairs < 0) {
+                printf("Cannot open the script: %s\n", script);
+                failed = 1;
+            } else {
+                ++done;
+            }
+            store_destroy(&temp);
+            store_destroy(&temp); /* повторное освобождение безопасно: указатели обнулены */
+        }
+    }
+    printf("Stores created, filled and closed: %ld of %ld\n", done, times);
+    if (done > 0) {
+        printf("Pairs in each: %ld\n", pairs);
+    }
+    return failed ? CLI_ERROR : CLI_OK;
+}
+
+/* Закрытие освобождает всё: ключи, значения, саму таблицу. Чтобы хранилищем
+   можно было пользоваться дальше, сразу создаётся новое, пустое. */
+static int command_close(Session *session) {
+    Store *store = session_current(session);
+    int count = store_count(store);
+    store_destroy(store);
+    if (!store_init(store)) {
+        printf("Not enough memory for a new store\n");
+        return CLI_ERROR;
+    }
+    printf("Store %d closed, pairs freed: %d. A new empty one is open.\n",
+           session->current + 1, count);
     return CLI_OK;
 }
 
@@ -458,6 +534,12 @@ int cli_execute(Session *session, int argc, char *argv[]) {
     }
     if (strcmp(name, "genscript") == 0) {
         return command_genscript(argc, argv);
+    }
+    if (strcmp(name, "stress") == 0) {
+        return command_stress(argc, argv);
+    }
+    if (strcmp(name, "close") == 0) {
+        return command_close(session);
     }
     if (strcmp(name, "help") == 0) {
         cli_print_help();

@@ -1,8 +1,31 @@
+#include <stdlib.h>
+
 #include "sort.h"
 
-/* Временный массив для слияния. Статический: он того же размера, что и
-   сам журнал, и в стеке не поместился бы. */
-static LogRecord buffer[LOGFILE_CAPACITY];
+/* Временный массив для слияния — того же размера, что и журнал. Он живёт
+   в куче между сортировками и растёт, когда журнал стал больше. */
+static LogRecord *buffer;
+static long buffer_capacity;
+
+/* Готовит буфер хотя бы на needed записей. Возвращает 1 при успехе. */
+static int reserve_buffer(long needed) {
+    if (needed <= buffer_capacity) {
+        return 1;
+    }
+    LogRecord *bigger = realloc(buffer, (size_t)needed * sizeof(LogRecord));
+    if (bigger == NULL) {
+        return 0;
+    }
+    buffer = bigger;
+    buffer_capacity = needed;
+    return 1;
+}
+
+void sort_free(void) {
+    free(buffer);
+    buffer = NULL;
+    buffer_capacity = 0;
+}
 
 /* Сливает две отсортированные половины [left, middle) и [middle, right).
    Результат пишется во временный массив, а не туда, откуда читаем,
@@ -54,6 +77,9 @@ static void merge_sort(LogRecord *records, long left, long right, int depth, int
 }
 
 int sort_by_time(LogFile *log) {
+    if (!reserve_buffer(log->count)) {
+        return 0;
+    }
     int max_depth = 0;
     merge_sort(log->records, 0, log->count, 1, &max_depth);
     log->sorted = 1;
@@ -82,7 +108,11 @@ long search_not_before(const LogFile *log, Timestamp moment) {
     return lower_bound(log->records, 0, log->count, moment);
 }
 
-void sort_records_for_cost(LogRecord *records, long count) {
+int sort_records_for_cost(LogRecord *records, long count) {
+    if (!reserve_buffer(count)) {
+        return 0;
+    }
     int depth = 0;
     merge_sort(records, 0, count, 1, &depth);
+    return 1;
 }

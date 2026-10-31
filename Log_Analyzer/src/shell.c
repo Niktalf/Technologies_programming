@@ -40,6 +40,7 @@ static void print_help(void) {
     printf("  level all | none           - enable all levels or clear them all\n");
     printf("  filter                     - show the current filter\n");
     printf("  time                       - check the time packing\n");
+    printf("  stress [n]                 - load and free the log n times\n");
     printf("  help                       - this list\n");
     printf("  quit                       - exit\n");
 }
@@ -165,10 +166,10 @@ static void print_load_report(const LogFile *log) {
     if (log->broken > 0) {
         printf("Lines that could not be parsed: %ld\n", log->broken);
     }
-    if (log->overflow > 0) {
-        printf("Records that did not fit into memory: %ld (capacity %d)\n",
-               log->overflow, LOGFILE_CAPACITY);
+    if (log->no_memory > 0) {
+        printf("Records lost for lack of memory: %ld\n", log->no_memory);
     }
+    printf("Array capacity: %ld records\n", log->capacity);
     if (log->truncated > 0) {
         printf("Lines longer than the buffer: %ld\n", log->truncated);
     }
@@ -259,6 +260,10 @@ static void command_sort(LogFile *log) {
         return;
     }
     int depth = sort_by_time(log);
+    if (depth == 0) {
+        printf("Not enough memory for sorting.\n");
+        return;
+    }
     view_reset(); /* записи переставлены, указатели смотрят не туда */
     printf("Records sorted: %ld, max recursion depth: %d\n", log->count, depth);
 }
@@ -373,11 +378,9 @@ static void command_span(const LogFile *log) {
     printf("\n");
 }
 
-/* Копия записей для замера: сортировать сами записи журнала нельзя,
-   иначе порядок чтения из файла потеряется. Статическая: она размером с журнал. */
-static LogRecord copy_space[LOGFILE_CAPACITY];
-
-/* Сравнение двух способов: переставлять указатели или сами записи. */
+/* Сравнение двух способов: переставлять указатели или сами записи.
+   Сортировать сами записи журнала нельзя — порядок чтения из файла
+   потеряется, — поэтому сортируется их копия в куче. */
 static void command_cost(const LogFile *log) {
     if (!require_log(log)) {
         return;
@@ -386,18 +389,57 @@ static void command_cost(const LogFile *log) {
     view_sort(log, ORDER_TIME);
     double by_pointers = (double)(clock() - start) / CLOCKS_PER_SEC;
 
+    /* +1: malloc от нуля байт вправе вернуть NULL, а пустой журнал — не ошибка. */
+    LogRecord *copy = malloc((size_t)(log->count + 1) * sizeof(LogRecord));
+    if (copy == NULL) {
+        printf("Not enough memory to copy the records.\n");
+        return;
+    }
     for (long i = 0; i < log->count; ++i) {
-        copy_space[i] = log->records[i];
+        copy[i] = log->records[i];
     }
     /* Тот же алгоритм, но переставляются сами записи, а не указатели. */
     start = clock();
-    sort_records_for_cost(copy_space, log->count);
+    int sorted = sort_records_for_cost(copy, log->count);
     double by_records = (double)(clock() - start) / CLOCKS_PER_SEC;
+    /* Освобождается только массив копий. Тексты записей не трогаем:
+       они принадлежат журналу, а в копии лежат те же адреса. */
+    free(copy);
+    if (!sorted) {
+        printf("Not enough memory for sorting.\n");
+        return;
+    }
 
     printf("Records: %ld, size of one record: %u bytes\n",
            log->count, (unsigned)sizeof(LogRecord));
     printf("Sorting pointers:     %.4f s\n", by_pointers);
     printf("Sorting the records:  %.4f s\n", by_records);
+}
+
+/* Задание: загрузить и освободить журнал много раз подряд. Если что-то
+   не освобождается, потребление памяти растёт с каждым кругом. */
+static void command_stress(const LogFile *log, char *words[], int count) {
+    if (!require_log(log)) {
+        return;
+    }
+    long times = count >= 2 ? strtol(words[1], NULL, 10) : 20;
+    if (times <= 0) {
+        times = 20;
+    }
+    LogFile temp;
+    logfile_init(&temp);
+    long loaded = 0;
+    int failed = 0;
+    for (long i = 0; i < times && !failed; ++i) {
+        if (logfile_load(&temp, log->path) == LOG_OK) {
+            ++loaded;
+        } else {
+            failed = 1;
+        }
+        logfile_destroy(&temp);
+        logfile_destroy(&temp); /* повторное освобождение безопасно */
+    }
+    printf("Logs loaded and freed: %ld of %ld\n", loaded, times);
 }
 
 /* Условие выборки: функция получает запись и данные условия (образец,
@@ -554,6 +596,8 @@ void shell_run(LogFile *log) {
             command_module(log, words, count, mask);
         } else if (strcmp(name, "between") == 0) {
             command_between(log, words, count, mask);
+        } else if (strcmp(name, "stress") == 0) {
+            command_stress(log, words, count);
         } else if (strcmp(name, "level") == 0) {
             mask = parse_level_arguments(mask, words, count);
             level_mask_print(mask);
@@ -570,5 +614,8 @@ void shell_run(LogFile *log) {
             printf("Type help for the list of commands.\n");
         }
     }
+    /* Перед выходом освобождаем всё, что выделяли модули сортировки. */
+    view_free();
+    sort_free();
     printf("Done.\n");
 }

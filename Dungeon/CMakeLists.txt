@@ -11,6 +11,7 @@ add_library(
         src/game.c
         src/hero.c
         src/map.c
+        src/monsters.c
         src/reach.c
 )
 

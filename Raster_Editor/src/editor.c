@@ -9,7 +9,17 @@ void editor_init(Editor *editor) {
     }
     editor->path[0] = '\0';
     editor->loaded = 0;
-    image_init(&editor->image);
+    editor->image.pixels = NULL;
+    editor->image.width = 0;
+    editor->image.height = 0;
+}
+
+void editor_destroy(Editor *editor) {
+    if (editor == NULL) {
+        return;
+    }
+    image_destroy(&editor->image);
+    editor->loaded = 0;
 }
 
 void editor_set_path(Editor *editor, const char *path) {

@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "map.h"
 #include "reach.h"
@@ -6,23 +7,23 @@
 /* Рекурсивный обход. Базовых случаев три, и все они проверяются в начале,
    до любого рекурсивного вызова: клетка за границей, клетка-стена, клетка
    уже посещена. Порядок важен: границы проверяются первыми, иначе
-   visited[y][x] прочитал бы чужую память.
+   пометка клетки за краем карты прочиталась бы из чужой памяти.
 
    Массив пометок и счётчики приходят адресами: функция меняет их, и все
    рекурсивные вызовы должны видеть одни и те же пометки, а не свои копии. */
-static void visit(char map[][MAP_COLS], char visited[][MAP_COLS],
+static void visit(const Map *map, char *visited,
                   int x, int y, int depth, int *cells, int *deepest) {
-    if (!map_inside(x, y)) {
+    if (!map_inside(map, x, y)) {
         return;
     }
     if (map_at(map, x, y) == TILE_WALL) {
         return;
     }
-    if (visited[y][x]) {
+    if (visited[map_index(map, y, x)]) {
         return; /* без этой проверки две соседние клетки вызывали бы друг друга вечно */
     }
 
-    visited[y][x] = 1;
+    visited[map_index(map, y, x)] = 1;
     ++*cells; /* скобки не нужны: ++ применяется к *cells, а не к указателю */
     if (depth > *deepest) {
         *deepest = depth;
@@ -35,10 +36,10 @@ static void visit(char map[][MAP_COLS], char visited[][MAP_COLS],
 }
 
 /* Есть ли среди посещённых клеток выход. */
-static int exit_visited(char map[][MAP_COLS], char visited[][MAP_COLS]) {
-    for (int y = 0; y < MAP_ROWS; ++y) {
-        for (int x = 0; x < MAP_COLS; ++x) {
-            if (visited[y][x] && map_at(map, x, y) == TILE_EXIT) {
+static int exit_visited(const Map *map, const char *visited) {
+    for (int y = 0; y < map->height; ++y) {
+        for (int x = 0; x < map->width; ++x) {
+            if (visited[map_index(map, y, x)] && map_at(map, x, y) == TILE_EXIT) {
                 return 1;
             }
         }
@@ -46,17 +47,24 @@ static int exit_visited(char map[][MAP_COLS], char visited[][MAP_COLS]) {
     return 0;
 }
 
-int reach_exit(char map[][MAP_COLS], int start_x, int start_y, int *out_cells, int *out_depth) {
-    if (map == NULL) {
+int reach_exit(const Map *map, int start_x, int start_y, int *out_cells, int *out_depth) {
+    if (map == NULL || map->cells == NULL) {
         return 0;
     }
-    /* Массив пометок — локальный: триста байт в стеке не страшны, и каждый
-       запуск начинает с чистого листа. Инициализатор {0} обнуляет весь
-       массив: локальный массив без инициализатора содержал бы мусор. */
-    char visited[MAP_ROWS][MAP_COLS] = { { 0 } };
+    /* calloc выделяет и сразу обнуляет: каждый запуск начинает с чистых
+       пометок. Размер — ровно по карте. */
+    char *visited = calloc((size_t)map->width * (size_t)map->height, 1);
+    if (visited == NULL) {
+        return -1;
+    }
     int cells = 0;
     int deepest = 0;
     visit(map, visited, start_x, start_y, 1, &cells, &deepest);
+    int found = exit_visited(map, visited);
+
+    /* Выделили в этой функции — здесь и освобождаем. */
+    free(visited);
+    visited = NULL;
 
     if (out_cells != NULL) {
         *out_cells = cells;
@@ -64,7 +72,7 @@ int reach_exit(char map[][MAP_COLS], int start_x, int start_y, int *out_cells, i
     if (out_depth != NULL) {
         *out_depth = deepest;
     }
-    return exit_visited(map, visited);
+    return found;
 }
 
 /* Опыт с переполнением стека. Поле size x size без стен; рекурсия та же.
@@ -84,8 +92,8 @@ int reach_exit(char map[][MAP_COLS], int start_x, int start_y, int *out_cells, i
    Отсюда кадр стека одного вызова: около 32 байт без оптимизации и около
    60 байт с -O3. С оптимизацией кадр больше: компилятор встраивает часть
    рекурсивных вызовов друг в друга. В Windows стек 1 МБ, и там поле
-   падает уже около 120 на 120. Карта 10 на 30 далека от этой границы,
-   но на практике 7 размер карты станет произвольным. */
+   падает уже около 120 на 120. Поэтому на практике 7 размер карты
+   ограничен 120 на 60 — 7200 клеток. */
 static char field_visited[REACH_FIELD_MAX][REACH_FIELD_MAX];
 static int field_size;
 static int field_deepest;

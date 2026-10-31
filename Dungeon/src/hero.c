@@ -2,16 +2,27 @@
 
 #include "hero.h"
 
-int hero_move(char map[][MAP_COLS], int *x, int *y, int direction) {
+int hero_target(int x, int y, int direction, int *out_x, int *out_y) {
     static const int DX[4] = { 0, 0, 1, -1 };
     static const int DY[4] = { -1, 1, 0, 0 };
 
-    if (map == NULL || x == NULL || y == NULL || direction < 0 || direction > 3) {
+    if (out_x == NULL || out_y == NULL || direction < 0 || direction > 3) {
         return 0;
     }
-    int nx = *x + DX[direction];
-    int ny = *y + DY[direction];
+    *out_x = x + DX[direction];
+    *out_y = y + DY[direction];
+    return 1;
+}
 
+int hero_move(const Map *map, int *x, int *y, int direction) {
+    if (map == NULL || x == NULL || y == NULL) {
+        return 0;
+    }
+    int nx = 0;
+    int ny = 0;
+    if (!hero_target(*x, *y, direction, &nx, &ny)) {
+        return 0;
+    }
     /* Клетка вне карты или стена — шага нет. map_cell_info отвечает
        на оба вопроса сразу и сама проверяет границы. */
     char tile = TILE_WALL;
@@ -37,7 +48,7 @@ void hero_damage(int *hp, int amount) {
     }
 }
 
-int hero_pick_gold(char map[][MAP_COLS], int x, int y, unsigned int *gold) {
+int hero_pick_gold(Map *map, int x, int y, unsigned int *gold) {
     if (map == NULL || gold == NULL || map_at(map, x, y) != TILE_GOLD) {
         return 0;
     }

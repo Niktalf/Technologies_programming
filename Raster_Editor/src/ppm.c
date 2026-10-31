@@ -17,13 +17,15 @@ const char *ppm_status_text(PpmStatus status) {
         return "the image is too large";
     case PPM_ERR_DATA:
         return "corrupted data: the file is cut off or a value exceeds the maximum";
+    case PPM_ERR_MEMORY:
+        return "not enough memory";
     default:
         return "unknown error";
     }
 }
 
 /* Больше этого числа в заголовке и данных PPM не бывает: стороны не больше
-   IMAGE_WIDTH и IMAGE_HEIGHT, максимум канала — 65535. */
+   IMAGE_MAX_SIDE, максимум канала — 65535. */
 #define PPM_NUMBER_MAX 1000000
 
 /* Пропускает пробелы и строки комментариев.
@@ -87,9 +89,9 @@ static PpmStatus read_header(FILE *file, int *width, int *height, int *maximum) 
     if (*width <= 0 || *height <= 0 || *maximum <= 0 || *maximum > 65535) {
         return PPM_ERR_HEADER;
     }
-    /* Размер нашего изображения фиксирован: больший файл пока не прочитать.
-       Изображение любого размера появится на практике 7. */
-    if (*width > IMAGE_WIDTH || *height > IMAGE_HEIGHT) {
+    /* Память выделяется под прочитанные размеры, но только после того,
+       как они проверены: иначе испорченный заголовок попросит гигабайты. */
+    if (*width > IMAGE_MAX_SIDE || *height > IMAGE_MAX_SIDE) {
         return PPM_ERR_SIZE;
     }
     return PPM_OK;
@@ -129,15 +131,12 @@ static PpmStatus read_pixels(FILE *file, Image *image, int maximum) {
     return PPM_OK;
 }
 
-/* Читаем во временное изображение, а в целевое переносим только при успехе.
-   Иначе размеры пришлось бы выставлять до чтения — а по ним считается
-   смещение пикселя, и при ошибке в целевом изображении осталась бы каша.
-   Временное изображение статическое: четверть мегабайта в стек не положить. */
-static Image scratch;
-
 /* Файл открывается и закрывается здесь, в одном месте; всё чтение —
    во вспомогательных функциях, которые на ошибке просто возвращают код.
-   Так fclose не приходится повторять перед каждым return. */
+   Так fclose не приходится повторять перед каждым return.
+
+   Читаем во временное изображение, а в целевое переносим только при успехе:
+   оборванный файл не должен портить то, что уже открыто. */
 PpmStatus ppm_load(Image *image, const char *path) {
     FILE *file = fopen(path, "r");
     if (file == NULL) {
@@ -147,18 +146,21 @@ PpmStatus ppm_load(Image *image, const char *path) {
     int width = 0;
     int height = 0;
     int maximum = 0;
+    Image loaded = { NULL, 0, 0 };
     PpmStatus status = read_header(file, &width, &height, &maximum);
+    if (status == PPM_OK && !image_create(&loaded, width, height)) {
+        status = PPM_ERR_MEMORY;
+    }
     if (status == PPM_OK) {
-        /* Размеры выставляются до чтения пикселей: по ним считается смещение. */
-        image_init(&scratch);
-        scratch.width = width;
-        scratch.height = height;
-        status = read_pixels(file, &scratch, maximum);
+        status = read_pixels(file, &loaded, maximum);
     }
     fclose(file);
 
-    if (status == PPM_OK) {
-        *image = scratch; /* целевое изображение меняется только при успехе */
+    if (status != PPM_OK) {
+        image_destroy(&loaded); /* за собой убираем и при ошибке */
+        return status;
     }
-    return status;
+    image_destroy(image); /* прежнее изображение освобождается */
+    *image = loaded;
+    return PPM_OK;
 }

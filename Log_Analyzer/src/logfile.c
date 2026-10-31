@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "logfile.h"
@@ -9,15 +10,58 @@ void logfile_init(LogFile *log) {
     if (log == NULL) {
         return;
     }
-    /* Массив записей не очищается: значимы только первые count элементов. */
+    log->records = NULL;
+    log->capacity = 0;
     log->count = 0;
     log->lines = 0;
     log->broken = 0;
-    log->overflow = 0;
+    log->no_memory = 0;
     log->truncated = 0;
     log->loaded = 0;
     log->sorted = 0;
     log->path[0] = '\0';
+}
+
+void logfile_destroy(LogFile *log) {
+    if (log == NULL || log->records == NULL) {
+        return;
+    }
+    /* Сначала текст каждой записи, потом сам массив: в обратном порядке
+       адреса текстов были бы уже потеряны. */
+    for (long i = 0; i < log->count; ++i) {
+        free(log->records[i].text);
+    }
+    free(log->records);
+    log->records = NULL;
+    log->capacity = 0;
+    log->count = 0;
+    log->loaded = 0;
+}
+
+/* Удваивает вместимость. Возвращает 1 при успехе. */
+static int grow(LogFile *log) {
+    long new_capacity = log->capacity > 0 ? log->capacity * 2 : LOGFILE_FIRST_CAPACITY;
+    /* Результат перевыделения кладётся во временный указатель: при неудаче
+       старый блок ещё нужен, чтобы его освободить. */
+    LogRecord *bigger = realloc(log->records, (size_t)new_capacity * sizeof(LogRecord));
+    if (bigger == NULL) {
+        return 0;
+    }
+    log->records = bigger;
+    log->capacity = new_capacity;
+    return 1;
+}
+
+int logfile_append(LogFile *log, const LogRecord *record) {
+    if (log == NULL || record == NULL) {
+        return 0;
+    }
+    if (log->count >= log->capacity && !grow(log)) {
+        return 0;
+    }
+    log->records[log->count] = *record;
+    ++log->count;
+    return 1;
 }
 
 const char *logfile_status_text(LogStatus status) {
@@ -62,13 +106,12 @@ static void add_line(LogFile *log, const char *line) {
         ++log->broken;
         return;
     }
-    /* Вместимость проверяется до записи в массив, а не после. */
-    if (log->count >= LOGFILE_CAPACITY) {
-        ++log->overflow;
-        return;
+    /* Массив растёт сам; если памяти не хватило, текст записи
+       освобождается здесь — журнал его так и не получил. */
+    if (!logfile_append(log, &record)) {
+        free(record.text);
+        ++log->no_memory;
     }
-    log->records[log->count] = record;
-    ++log->count;
 }
 
 LogStatus logfile_load(LogFile *log, const char *path) {
@@ -80,6 +123,7 @@ LogStatus logfile_load(LogFile *log, const char *path) {
         return LOG_ERR_OPEN;
     }
 
+    logfile_destroy(log);
     logfile_init(log);
     strncpy(log->path, path, sizeof log->path - 1);
     log->path[sizeof log->path - 1] = '\0';

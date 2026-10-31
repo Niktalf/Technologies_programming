@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "parse.h"
@@ -74,10 +75,13 @@ int parse_line(const char *line, LogRecord *out) {
         return 0;
     }
 
-    /* Текст: всё до конца строки. Слишком длинный обрезается, а не отвергается. */
+    /* Текст: всё до конца строки. Память выделяется по настоящей длине
+       плюс байт под нуль; освобождает её журнал. Текст разбирается последним,
+       чтобы при ошибке в других полях выделять было нечего. */
     size_t text_length = strlen(bar3 + 1);
-    if (text_length >= sizeof out->text) {
-        text_length = sizeof out->text - 1;
+    out->text = malloc(text_length + 1);
+    if (out->text == NULL) {
+        return 0;
     }
     memcpy(out->text, bar3 + 1, text_length);
     out->text[text_length] = '\0';
