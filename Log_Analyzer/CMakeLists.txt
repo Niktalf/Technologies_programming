@@ -6,13 +6,16 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_library(
         ${PROJECT_NAME}_core
+        src/binlog.c
         src/generator.c
         src/level.c
         src/logfile.c
         src/parse.c
+        src/query.c
         src/shell.c
         src/sort.c
         src/stats.c
+        src/status.c
         src/text.c
         src/timestamp.c
         src/view.c

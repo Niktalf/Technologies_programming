@@ -52,29 +52,16 @@ static int grow(LogFile *log) {
     return 1;
 }
 
-int logfile_append(LogFile *log, const LogRecord *record) {
+LogStatus logfile_append(LogFile *log, const LogRecord *record) {
     if (log == NULL || record == NULL) {
-        return 0;
+        return LOG_ERR_ARG;
     }
     if (log->count >= log->capacity && !grow(log)) {
-        return 0;
+        return LOG_ERR_MEMORY;
     }
     log->records[log->count] = *record;
     ++log->count;
-    return 1;
-}
-
-const char *logfile_status_text(LogStatus status) {
-    switch (status) {
-    case LOG_OK:
-        return "success";
-    case LOG_ERR_ARG:
-        return "invalid argument";
-    case LOG_ERR_OPEN:
-        return "cannot open file";
-    default:
-        return "unknown error";
-    }
+    return LOG_OK;
 }
 
 /* Убирает завершающие переводы строки, в том числе виндовый \r. */
@@ -102,13 +89,18 @@ static void add_line(LogFile *log, const char *line) {
         return; /* пустые строки не считаются испорченными */
     }
     LogRecord record;
-    if (!parse_line(line, &record)) {
+    LogStatus status = parse_line(line, &record);
+    if (status == LOG_ERR_FORMAT) {
         ++log->broken;
+        return;
+    }
+    if (status != LOG_OK) {
+        ++log->no_memory; /* разбор не смог выделить память под текст */
         return;
     }
     /* Массив растёт сам; если памяти не хватило, текст записи
        освобождается здесь — журнал его так и не получил. */
-    if (!logfile_append(log, &record)) {
+    if (logfile_append(log, &record) != LOG_OK) {
         free(record.text);
         ++log->no_memory;
     }
@@ -138,22 +130,21 @@ LogStatus logfile_load(LogFile *log, const char *path) {
         add_line(log, line);
     }
 
-    fclose(file);
+    /* Ошибка чтения посреди файла выглядит для fgets как конец файла.
+       Отличить их можно только через ferror: иначе оборванное чтение
+       сошло бы за короткий журнал. */
+    int read_failed = ferror(file);
+    fclose(file); /* файл открыт на чтение: данных, которые fclose мог бы потерять, нет */
+    if (read_failed) {
+        return LOG_ERR_CORRUPT;
+    }
     log->loaded = 1;
     return LOG_OK;
 }
 
 void logfile_print_record(const LogRecord *record) {
-    int year = 0;
-    int month = 0;
-    int day = 0;
-    int hour = 0;
-    int minute = 0;
-    int second = 0;
-    timestamp_unpack(record->time, &year, &month, &day, &hour, &minute, &second);
-    printf("%04d-%02d-%02d %02d:%02d:%02d  %-5s  %-8s  %s\n",
-           year, month, day, hour, minute, second,
-           level_name(record->level), record->module, record->text);
+    timestamp_print(record->time);
+    printf("  %-5s  %-8s  %s\n", level_name(record->level), record->module, record->text);
 }
 
 void logfile_print_head(const LogFile *log, int count, LevelMask mask) {

@@ -121,10 +121,13 @@ static void merge_sort(long left, long right, Order order) {
     merge(left, middle, right, order);
 }
 
-long view_sort(const LogFile *log, Order order) {
+LogStatus view_sort(const LogFile *log, Order order) {
+    if (log == NULL) {
+        return LOG_ERR_ARG;
+    }
     if (!reserve(log->count)) {
         count = 0;
-        return 0;
+        return LOG_ERR_MEMORY;
     }
     count = log->count;
     for (long i = 0; i < count; ++i) {
@@ -132,7 +135,7 @@ long view_sort(const LogFile *log, Order order) {
         items[i] = &log->records[i];
     }
     merge_sort(0, count, order);
-    return count;
+    return LOG_OK;
 }
 
 void view_print(long count_to_print) {

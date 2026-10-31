@@ -7,6 +7,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 add_library(
         ${PROJECT_NAME}_core
         src/cli.c
+        src/demos.c
+        src/kvstore.c
         src/parser.c
         src/range.c
         src/record.c
@@ -14,12 +16,16 @@ add_library(
         src/session.c
         src/store.c
 )
-
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 
 add_executable(
         ${PROJECT_NAME}
         src/main.c
 )
-
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
+
+add_executable(
+        ${PROJECT_NAME}_demo
+        demo/phonebook.c
+)
+target_link_libraries(${PROJECT_NAME}_demo PRIVATE ${PROJECT_NAME}_core)

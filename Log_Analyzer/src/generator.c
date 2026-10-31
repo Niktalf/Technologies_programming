@@ -35,16 +35,20 @@ static Level random_level(void) {
     return LEVEL_FATAL;
 }
 
-int generator_write(const char *path, long count, unsigned int seed) {
+LogStatus generator_write(const char *path, long count, unsigned int seed) {
+    if (path == NULL || count < 0) {
+        return LOG_ERR_ARG;
+    }
     FILE *file = fopen(path, "w");
     if (file == NULL) {
-        return 0;
+        return LOG_ERR_OPEN;
     }
     srand(seed);
 
     const int module_count = (int)(sizeof MODULES / sizeof MODULES[0]);
     const int message_count = (int)(sizeof MESSAGES / sizeof MESSAGES[0]);
-    for (long i = 0; i < count; ++i) {
+    int written = 1;
+    for (long i = 0; i < count && written; ++i) {
         /* Порядок вызовов rand внутри одного вызова printf не определён,
            поэтому каждое случайное значение берётся отдельной инструкцией:
            только так файл с тем же зерном совпадает на любом компиляторе. */
@@ -55,9 +59,15 @@ int generator_write(const char *path, long count, unsigned int seed) {
         Level level = random_level();
         const char *module = MODULES[rand() % module_count];
         const char *message = MESSAGES[rand() % message_count];
-        fprintf(file, "2026-03-%02d %02d:%02d:%02d|%s|%s|%s #%ld\n",
-                day, hour, minute, second, level_name(level), module, message, i + 1);
+        /* fprintf возвращает отрицательное число при ошибке записи. */
+        written = fprintf(file, "2026-03-%02d %02d:%02d:%02d|%s|%s|%s #%ld\n",
+                          day, hour, minute, second, level_name(level), module, message,
+                          i + 1) >= 0;
     }
-    fclose(file);
-    return 1;
+    /* Часть ошибок записи видна только при закрытии: данные из буфера
+       уходят на диск именно тогда. */
+    if (fclose(file) != 0 || !written) {
+        return LOG_ERR_WRITE;
+    }
+    return LOG_OK;
 }

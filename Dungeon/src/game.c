@@ -3,31 +3,28 @@
 #include <string.h>
 
 #include "command.h"
+#include "entities.h"
 #include "game.h"
-#include "hero.h"
+#include "level.h"
 #include "map.h"
-#include "monsters.h"
 #include "reach.h"
+#include "status.h"
 
-/* Практика 7: размер карты задаётся при запуске, карта и список монстров
-   живут в куче. Всё выделенное освобождается перед выходом.
+/* Практика 8: всё состояние игры собрано в структуру Game, и обработчики
+   команд получают её адрес. На практике 7 у handle_command было
+   пятнадцать параметров; теперь их три: игра, слова и их число.
 
-   Практика 6: строка читается целиком и разбирается на слова вручную.
-   Команды понимают сокращения: go north, north и n — одно и то же.
-
-   Практика 5: глобальных переменных больше нет. Карта и характеристики
-   героя — локальные переменные game_run, и функции получают их адреса.
-   По списку параметров видно, что функция может изменить: всё, что
-   передано указателем без const, и только это. */
-
-/* Счётчик вызовов команды addr. Переменная вне функций живёт всё время
-   работы программы. Нужна, чтобы показать, где лежат такие переменные. */
-static int addr_calls = 0;
+   Модули: map — карта; entities — герой и монстры; level — загрузка
+   уровня из файла; reach — достижимость выхода; command — разбор строки;
+   game — игровой цикл и команды. */
 
 /* Названия состояний в порядке битов: элемент номер i описывает бит номер i. */
 static const char *const STATE_NAMES[STATE_COUNT] = {
     "poisoned", "blinded", "invisible", "petrified", "burning", "asleep"
 };
+
+/* Сколько монстров показывает команда monsters: длинный список не нужен. */
+#define MONSTERS_SHOWN 20
 
 static void print_commands(void) {
     printf("Commands (short form in parentheses):\n");
@@ -35,20 +32,41 @@ static void print_commands(void) {
     printf("  look (l) - map; check (c) - is the exit reachable; cell - what is underfoot\n");
     printf("  status (st), inventory (i), use <number> (u) - use an item\n");
     printf("  attack <where> (a) - hit a monster next to you; monsters (m) - list\n");
-    printf("  spawn <N> - add monsters; stress <N> - create and destroy a level N times\n");
-    printf("  hit <N>, on/off/toggle <state>, addr, stacktest <N>\n");
+    printf("  level <file> - load a level; spawn <N>; stress <N>\n");
+    printf("  hit <N>, on/off/toggle <state>, sizes\n");
     printf("  help (h), quit (q)\n");
 }
 
-/* Получает значения, а не адреса: функция только читает. */
-static void print_status(int hp, int hp_max, unsigned char attack, unsigned int gold,
-                         int depth, unsigned int states) {
-    printf("Health: %d / %d (%.1f%%)\n", hp, hp_max, (double)hp / (double)hp_max * 100.0);
-    printf("Attack: %u, gold: %u, floor: %d\n", (unsigned)attack, gold, depth);
+/* Отрисовка: карта, поверх неё монстры и герой. Сама карта не меняется,
+   поэтому игра передаётся указателем на const. */
+static void game_draw(const Game *game) {
+    const Map *map = &game->map;
+    for (int y = 0; y < map->height; ++y) {
+        for (int x = 0; x < map->width; ++x) {
+            char shown = map_at(map, x, y);
+            if (monsters_find(&game->monsters, x, y) >= 0) {
+                shown = 'M';
+            }
+            if (x == game->hero.x && y == game->hero.y) {
+                shown = '@';
+            }
+            putchar(shown);
+        }
+        putchar('\n');
+    }
+}
+
+/* Функции печати получают только ту часть игры, которая им нужна:
+   по параметру сразу видно, что print_status смотрит лишь на героя. */
+static void print_status(const Hero *hero) {
+    printf("Health: %d / %d (%.1f%%)\n", hero->hp, hero->hp_max,
+           (double)hero->hp / (double)hero->hp_max * 100.0);
+    printf("Attack: %u, gold: %u, floor: %d\n",
+           (unsigned)hero->attack, hero->gold, hero->depth);
     printf("States:");
     int any = 0;
     for (int i = 0; i < STATE_COUNT; ++i) {
-        if ((states & (1u << i)) != 0) {
+        if ((hero->states & (1u << i)) != 0) {
             printf(" %s", STATE_NAMES[i]);
             any = 1;
         }
@@ -56,8 +74,41 @@ static void print_status(int hp, int hp_max, unsigned char attack, unsigned int 
     printf("%s\n", any ? "" : " none");
 }
 
-/* Номер направления по слову или -1. Регистр не важен: слово уже
-   переведено в нижний регистр. */
+static void print_inventory(const Hero *hero) {
+    if (hero->item_count == 0) {
+        printf("The bag is empty.\n");
+        return;
+    }
+    for (int i = 0; i < hero->item_count; ++i) {
+        printf("  %d. %s\n", i + 1, hero_item_name(hero->items[i]));
+    }
+}
+
+static void print_monsters(const MonsterList *monsters) {
+    printf("Monsters: %d, list capacity: %d, doublings: %d\n",
+           monsters->count, monsters->capacity, monsters->growths);
+    for (int i = 0; i < monsters->count && i < MONSTERS_SHOWN; ++i) {
+        printf("  %d. (%d, %d), health %d\n", i + 1,
+               monsters->items[i].x, monsters->items[i].y, monsters->items[i].hp);
+    }
+    if (monsters->count > MONSTERS_SHOWN) {
+        printf("  ... and %d more\n", monsters->count - MONSTERS_SHOWN);
+    }
+}
+
+/* Размеры структур: почему они передаются адресом. Копия Game при каждом
+   вызове стоила бы десятки байт, а адрес занимает восемь. */
+static void print_sizes(void) {
+    printf("sizeof(Hero)    = %u bytes\n", (unsigned)sizeof(Hero));
+    printf("sizeof(Monster) = %u bytes\n", (unsigned)sizeof(Monster));
+    printf("sizeof(Map)     = %u bytes\n", (unsigned)sizeof(Map));
+    printf("sizeof(Game)    = %u bytes\n", (unsigned)sizeof(Game));
+    printf("sizeof(Game *)  = %u bytes\n", (unsigned)sizeof(Game *));
+    printf("The hero's attack field takes 1 byte, but an int follows it: the compiler\n");
+    printf("inserts alignment padding, so the sum of the fields is less than sizeof.\n");
+}
+
+/* Номер направления по слову или -1. Слово уже в нижнем регистре. */
 static int direction_number(const char *word) {
     if (command_is(word, "north", "n")) {
         return DIRECTION_NORTH;
@@ -72,156 +123,6 @@ static int direction_number(const char *word) {
         return DIRECTION_WEST;
     }
     return -1;
-}
-
-/* Номер состояния по слову или -1. */
-static int state_number(const char *word) {
-    for (int i = 0; i < STATE_COUNT; ++i) {
-        if (strcmp(word, STATE_NAMES[i]) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/* Меняет бит состояния по адресу states. Название состояния — слово word. */
-static void change_state(const char *command, const char *word, unsigned int *states) {
-    if (states == NULL) {
-        return;
-    }
-    if (word == NULL) {
-        printf("Which state? Example: %s poisoned\n", command);
-        return;
-    }
-    int number = state_number(word);
-    if (number < 0) {
-        printf("No state %s. Known: poisoned, blinded, invisible,\n", word);
-        printf("petrified, burning, asleep\n");
-        return;
-    }
-    unsigned int mask = 1u << number;
-    if (strcmp(command, "on") == 0) {
-        *states = *states | mask;
-    } else if (strcmp(command, "off") == 0) {
-        *states = *states & ~mask;
-    } else {
-        *states = *states ^ mask;
-    }
-    printf("Hero is %s: %s\n", STATE_NAMES[number], (*states & mask) != 0 ? "yes" : "no");
-}
-
-/* Число из слова с понятным сообщением при ошибке. Возвращает 1 при успехе. */
-static int number_argument(const char *word, const char *example, int *out) {
-    int code = command_parse_number(word, out);
-    if (code != NUMBER_OK) {
-        printf("%s. Example: %s\n", command_number_error(code), example);
-        return 0;
-    }
-    return 1;
-}
-
-static void print_inventory(const int items[], int item_count) {
-    if (item_count == 0) {
-        printf("The bag is empty.\n");
-        return;
-    }
-    for (int i = 0; i < item_count; ++i) {
-        printf("  %d. %s\n", i + 1, hero_item_name(items[i]));
-    }
-}
-
-#define MONSTER_HP 8
-
-/* Шаг героя: координаты, золото и счётчик ходов меняются по адресам.
-   Монстр в клетке назначения загораживает путь. */
-static void command_move(Map *map, const Monsters *monsters, int direction,
-                         int *x, int *y, unsigned int *gold, int *turns) {
-    int tx = 0;
-    int ty = 0;
-    hero_target(*x, *y, direction, &tx, &ty);
-    if (map_inside(map, tx, ty) && monsters_find(monsters, map_index(map, ty, tx)) >= 0) {
-        printf("A monster blocks the way. Attack: attack <where>\n");
-        return;
-    }
-    if (!hero_move(map, x, y, direction)) {
-        printf("There is a wall.\n");
-        return;
-    }
-    ++*turns;
-    if (hero_pick_gold(map, *x, *y, gold)) {
-        printf("The hero picks up %d gold. Total: %u\n", GOLD_PER_PILE, *gold);
-    }
-    if (map_at(map, *x, *y) == TILE_EXIT) {
-        printf("Here is the exit to the next floor. Going down comes later.\n");
-    }
-    map_draw(map, *x, *y, monsters->cells, monsters->count);
-}
-
-static void describe_cell(const Map *map, int x, int y) {
-    char tile = ' ';
-    int walkable = 0;
-    if (!map_cell_info(map, x, y, &tile, &walkable)) {
-        printf("Cell (%d, %d) is outside the map.\n", x, y);
-        return;
-    }
-    printf("Cell (%d, %d): symbol '%c', %s\n", x, y, tile,
-           walkable ? "walkable" : "not walkable");
-}
-
-static void command_check(const Map *map, int x, int y) {
-    int cells = 0;
-    int depth = 0;
-    int found = reach_exit(map, x, y, &cells, &depth);
-    if (found < 0) {
-        printf("Not enough memory for the check.\n");
-        return;
-    }
-    printf("%s\n", found ? "The exit is reachable." : "The exit is unreachable.");
-    printf("Cells visited: %d, recursion depth: %d\n", cells, depth);
-}
-
-/* Наносит урон из аргумента. Возвращает 0, если герой погиб. */
-static int command_hit(const char *argument, int *hp, int hp_max) {
-    int damage = 0;
-    if (!number_argument(argument, "hit 7", &damage)) {
-        return 1;
-    }
-    hero_damage(hp, damage);
-    printf("The hero takes %d damage. Health: %d / %d\n", damage, *hp, hp_max);
-    if (*hp == 0) {
-        printf("The hero is dead.\n");
-        return 0;
-    }
-    return 1;
-}
-
-static void command_use(const char *argument, int items[], int *item_count,
-                        int *hp, int hp_max, unsigned int *states) {
-    int number = 0;
-    if (!number_argument(argument, "use 1", &number)) {
-        return;
-    }
-    if (number < 1 || number > *item_count) {
-        printf("No item number %d in the bag. Items: %d\n", number, *item_count);
-        return;
-    }
-    printf("The hero uses: %s\n", hero_item_name(items[number - 1]));
-    hero_use_item(items, item_count, number, hp, hp_max, states);
-    printf("Health: %d / %d\n", *hp, hp_max);
-}
-
-static void command_stacktest(const char *argument) {
-    int size = 0;
-    if (!number_argument(argument, "stacktest 300", &size)) {
-        return;
-    }
-    if (size < 1 || size > REACH_FIELD_MAX) {
-        printf("The field side is from 1 to %d\n", REACH_FIELD_MAX);
-        return;
-    }
-    printf("Walking an open field %d x %d...\n", size, size);
-    fflush(stdout); /* при падении текст из буфера иначе пропал бы */
-    printf("Recursion depth: %d\n", reach_open_field(size));
 }
 
 /* Направление из слова-аргумента (с переводом в нижний регистр) или -1
@@ -250,192 +151,281 @@ static int step_direction(char *words[], int count) {
     return direction >= 0 ? direction : -2;
 }
 
-/* Селит n монстров в случайные свободные клетки. Возвращает, сколько
-   удалось поселить: место или память могут кончиться раньше. */
-static int spawn_monsters(const Map *map, Monsters *monsters, int n, int hero_x, int hero_y) {
-    int placed = 0;
-    int attempts = 0;
-    int out_of_memory = 0;
-    while (placed < n && attempts < n * 20 && !out_of_memory) {
-        /* Две координаты — двумя инструкциями: порядок вычисления
-           аргументов функции не определён. */
-        int x = 1 + rand() % (map->width - 2);
-        int y = 1 + rand() % (map->height - 2);
-        int cell = map_index(map, y, x);
-        ++attempts;
-        int free_cell = map_at(map, x, y) == TILE_FLOOR && !(x == hero_x && y == hero_y)
-                        && monsters_find(monsters, cell) < 0;
-        if (free_cell) {
-            if (monsters_add(monsters, cell, MONSTER_HP)) {
-                ++placed;
-            } else {
-                printf("Not enough memory for a new monster.\n");
-                out_of_memory = 1;
-            }
-        }
-    }
-    return placed;
-}
-
-static void print_monsters(const Map *map, const Monsters *monsters) {
-    printf("Monsters: %d, list capacity: %d, doublings: %d\n",
-           monsters->count, monsters->capacity, monsters->growths);
-    for (int i = 0; i < monsters->count && i < 20; ++i) {
-        printf("  %d. (%d, %d), health %d\n", i + 1,
-               monsters->cells[i] % map->width, monsters->cells[i] / map->width,
-               monsters->hps[i]);
-    }
-    if (monsters->count > 20) {
-        printf("  ... and %d more\n", monsters->count - 20);
-    }
-}
-
-/* Удар по монстру в соседней клетке. Побеждённый монстр удаляется из списка.
-   Возвращает 1, если удар состоялся и ход потрачен. */
-static int command_attack(const Map *map, Monsters *monsters, char *argument,
-                          int x, int y, unsigned char power) {
-    int direction = direction_argument(argument, "attack");
-    if (direction < 0) {
+/* Число из слова с понятным сообщением при ошибке. Возвращает 1 при успехе. */
+static int number_argument(const char *word, const char *example, int *out) {
+    int code = command_parse_number(word, out);
+    if (code != NUMBER_OK) {
+        printf("%s. Example: %s\n", command_number_error(code), example);
         return 0;
     }
-    int tx = 0;
-    int ty = 0;
-    hero_target(x, y, direction, &tx, &ty);
-    int index = map_inside(map, tx, ty) ? monsters_find(monsters, map_index(map, ty, tx)) : -1;
-    if (index < 0) {
-        printf("Nobody there.\n");
-        return 1;
-    }
-    monsters->hps[index] = monsters->hps[index] - power;
-    if (monsters->hps[index] > 0) {
-        printf("Hit! The monster has %d health left.\n", monsters->hps[index]);
-        return 1;
-    }
-    monsters_remove(monsters, index);
-    printf("The monster is defeated. Monsters left: %d\n", monsters->count);
     return 1;
 }
 
-static void command_spawn(const char *argument, const Map *map, Monsters *monsters,
-                          int x, int y) {
+/* Номер состояния по слову или -1. Слово уже в нижнем регистре. */
+static int state_number(const char *word) {
+    for (int i = 0; i < STATE_COUNT; ++i) {
+        if (strcmp(word, STATE_NAMES[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Команды on, off и toggle: ставят, снимают или переключают бит состояния. */
+static void command_state(Hero *hero, const char *command, char *word) {
+    if (word == NULL) {
+        printf("Which state? Example: %s poisoned\n", command);
+        return;
+    }
+    command_to_lower(word);
+    int number = state_number(word);
+    if (number < 0) {
+        printf("No state %s. Known: poisoned, blinded, invisible,\n", word);
+        printf("petrified, burning, asleep\n");
+        return;
+    }
+    unsigned int mask = 1u << number;
+    if (strcmp(command, "on") == 0) {
+        hero->states = hero->states | mask;
+    } else if (strcmp(command, "off") == 0) {
+        hero->states = hero->states & ~mask;
+    } else {
+        hero->states = hero->states ^ mask;
+    }
+    printf("Hero is %s: %s\n", STATE_NAMES[number], (hero->states & mask) != 0 ? "yes" : "no");
+}
+
+/* Селит до n монстров в свободные клетки. Возвращает код: память может
+   кончиться. Сколько поселено — через *out_placed. */
+static Status spawn_monsters(Game *game, int n, int *out_placed) {
+    *out_placed = 0;
+    int attempts = 0;
+    Status status = STATUS_OK;
+    while (status == STATUS_OK && *out_placed < n && attempts < n * 20) {
+        /* Две координаты — двумя инструкциями: порядок вычисления
+           аргументов не определён, а так он один на всех компиляторах. */
+        int x = 1 + rand() % (game->map.width - 2);
+        int y = 1 + rand() % (game->map.height - 2);
+        ++attempts;
+        if (map_at(&game->map, x, y) == TILE_FLOOR
+            && !(x == game->hero.x && y == game->hero.y)
+            && monsters_find(&game->monsters, x, y) < 0) {
+            status = monsters_add(&game->monsters, x, y, MONSTER_HP);
+            if (status == STATUS_OK) {
+                ++*out_placed;
+            }
+        }
+    }
+    return status;
+}
+
+/* Шаг героя. Монстр в клетке назначения загораживает путь. */
+static void command_move(Game *game, int direction) {
+    int tx = 0;
+    int ty = 0;
+    hero_target(&game->hero, direction, &tx, &ty);
+    if (monsters_find(&game->monsters, tx, ty) >= 0) {
+        printf("A monster blocks the way. Attack: attack <where>\n");
+        return;
+    }
+    if (!hero_move(&game->hero, &game->map, direction)) {
+        printf("There is a wall.\n");
+        return;
+    }
+    ++game->turns;
+    if (hero_pick_gold(&game->hero, &game->map)) {
+        printf("The hero picks up %d gold. Total: %u\n", GOLD_PER_PILE, game->hero.gold);
+    }
+    if (map_at(&game->map, game->hero.x, game->hero.y) == TILE_EXIT) {
+        printf("Here is the exit to the next floor. Going down comes later.\n");
+    }
+    game_draw(game);
+}
+
+static void command_attack(Game *game, char *argument) {
+    int direction = direction_argument(argument, "attack");
+    if (direction < 0) {
+        return;
+    }
+    int tx = 0;
+    int ty = 0;
+    hero_target(&game->hero, direction, &tx, &ty);
+    int index = monsters_find(&game->monsters, tx, ty);
+    if (index < 0) {
+        printf("Nobody there.\n");
+        return;
+    }
+    ++game->turns;
+    /* Указатель на элемент списка годится только до следующего изменения
+       списка: удаление или рост могут его испортить. Здесь он живёт три строки. */
+    Monster *target = &game->monsters.items[index];
+    target->hp = target->hp - game->hero.attack;
+    if (target->hp > 0) {
+        printf("Hit! The monster has %d health left.\n", target->hp);
+        return;
+    }
+    monsters_remove(&game->monsters, index);
+    printf("The monster is defeated. Monsters left: %d\n", game->monsters.count);
+}
+
+static void command_cell(const Game *game) {
+    int x = game->hero.x;
+    int y = game->hero.y;
+    char tile = ' ';
+    int walkable = 0;
+    if (!map_cell_info(&game->map, x, y, &tile, &walkable)) {
+        printf("Cell (%d, %d) is outside the map.\n", x, y);
+        return;
+    }
+    printf("Cell (%d, %d): symbol '%c', %s\n", x, y, tile,
+           walkable ? "walkable" : "not walkable");
+}
+
+static void command_check(const Game *game) {
+    int found = 0;
+    int cells = 0;
+    int depth = 0;
+    Status status = reach_exit(&game->map, game->hero.x, game->hero.y,
+                               &found, &cells, &depth);
+    if (status != STATUS_OK) {
+        printf("The check failed: %s\n", status_text(status));
+        return;
+    }
+    printf("%s\n", found ? "The exit is reachable." : "The exit is unreachable.");
+    printf("Cells visited: %d, recursion depth: %d\n", cells, depth);
+}
+
+/* Загрузка уровня во время игры. При ошибке level_load игру не трогает,
+   поэтому она продолжается на прежнем уровне. */
+static void command_level(Game *game, const char *path) {
+    if (path == NULL) {
+        printf("Which file? Example: level levels/cave.txt\n");
+        return;
+    }
+    int line = 0;
+    Status status = level_load(path, game, &line);
+    if (status != STATUS_OK) {
+        if (line > 0) {
+            printf("Level %s not loaded: %s (line %d)\n", path, status_text(status), line);
+        } else {
+            printf("Level %s not loaded: %s\n", path, status_text(status));
+        }
+        printf("The game goes on at the previous level.\n");
+        return;
+    }
+    printf("Level loaded %s: %d x %d, monsters %d\n", path,
+           game->map.width, game->map.height, game->monsters.count);
+    game_draw(game);
+}
+
+static void command_spawn(Game *game, const char *argument) {
     int number = 0;
     if (!number_argument(argument, "spawn 10", &number)) {
         return;
     }
-    printf("Monsters added: %d\n", spawn_monsters(map, monsters, number, x, y));
-    print_monsters(map, monsters);
+    int placed = 0;
+    Status status = spawn_monsters(game, number, &placed);
+    printf("Monsters added: %d\n", placed);
+    if (status != STATUS_OK) {
+        printf("Could not add the rest: %s\n", status_text(status));
+    }
 }
 
 /* Создаёт и уничтожает уровень с монстрами times раз. Если что-то
-   не освобождается, потребление памяти растёт с каждым кругом. */
-static void command_stress(const char *argument, int width, int height) {
+   не освобождается, потребление памяти растёт с каждым кругом.
+   Временная игра — локальная структура; в куче только её карта и список. */
+static void command_stress(const Game *game, const char *argument) {
     int times = 0;
     if (!number_argument(argument, "stress 100", &times)) {
         return;
     }
     int failures = 0;
     for (int i = 0; i < times; ++i) {
-        Map map;
-        if (map_create(&map, width, height, (unsigned int)i)) {
-            Monsters monsters;
-            monsters_init(&monsters);
-            spawn_monsters(&map, &monsters, 100, 1, 1);
-            monsters_destroy(&monsters);
-            map_destroy(&map);
-            /* Повторное освобождение безопасно: указатели обнулены. */
-            map_destroy(&map);
-            monsters_destroy(&monsters);
-        } else {
+        Game temp;
+        monsters_init(&temp.monsters);
+        hero_init(&temp.hero, 1, 1);
+        if (map_create(&temp.map, game->map.width, game->map.height) != STATUS_OK) {
             ++failures;
+        } else {
+            map_generate(&temp.map, (unsigned int)i);
+            int placed = 0;
+            if (spawn_monsters(&temp, 100, &placed) != STATUS_OK) {
+                ++failures;
+            }
         }
+        monsters_destroy(&temp.monsters);
+        map_destroy(&temp.map);
     }
     printf("Levels created and destroyed: %d, failures: %d\n", times - failures, failures);
 }
 
-/* Вспомогательная функция для addr: её локальная переменная лежит
-   в кадре стека глубже, чем переменные game_run. */
-static void print_deeper_local(void) {
-    int deeper = 0;
-    printf("  local in a called function       %p\n", (void *)&deeper);
+static void command_use(Hero *hero, const char *argument) {
+    int number = 0;
+    if (!number_argument(argument, "use 1", &number)) {
+        return;
+    }
+    if (number < 1 || number > hero->item_count) {
+        printf("No item number %d in the bag. Items: %d\n", number, hero->item_count);
+        return;
+    }
+    printf("The hero uses: %s\n", hero_item_name(hero->items[number - 1]));
+    hero_use_item(hero, number);
+    printf("Health: %d / %d\n", hero->hp, hero->hp_max);
 }
 
-/* Адреса переменных из разных областей памяти. */
-static void print_addresses(const Map *map, const Monsters *monsters, int *hp, int *turns) {
-    /* Статическая локальная переменная живёт всё время работы программы,
-       как глобальная, но видна только в этой функции. Лежит не в стеке. */
-    static int calls_here = 0;
-    const char *literal = "string literal";
-
-    ++addr_calls;
-    ++calls_here;
-    printf("Stack - local variables, live until the function returns:\n");
-    printf("  health (in game_run)             %p\n", (void *)hp);
-    printf("  turn counter (in game_run)       %p\n", (void *)turns);
-    printf("  map structure (in game_run)      %p\n", (void *)map);
-    print_deeper_local();
-    printf("Heap - memory from malloc and realloc, lives until free:\n");
-    printf("  map cells                        %p\n", (void *)map->cells);
-    printf("  monster cell array               %p\n", (void *)monsters->cells);
-    printf("Static memory - lives for the whole run of the program:\n");
-    printf("  addr_calls, outside functions    %p\n", (void *)&addr_calls);
-    printf("  calls_here, static in a function %p\n", (void *)&calls_here);
-    printf("Read-only - program constants:\n");
-    printf("  the string literal itself        %p\n", (void *)literal);
-    printf("Map cells: row 0 column 1 is +1, row 1 column 0 is +%d (the width)\n",
-           map->width);
-    printf("addr calls: %d\n", calls_here);
+/* Наносит урон из аргумента. Возвращает 0, если герой погиб. */
+static int command_hit(Hero *hero, const char *argument) {
+    int damage = 0;
+    if (!number_argument(argument, "hit 7", &damage)) {
+        return 1;
+    }
+    hero_damage(hero, damage);
+    printf("The hero takes %d damage. Health: %d / %d\n", damage, hero->hp, hero->hp_max);
+    if (hero->hp == 0) {
+        printf("The hero is dead.\n");
+        return 0;
+    }
+    return 1;
 }
 
-/* Выполняет одну команду, разобранную на слова. Возвращает 0, если игра
-   закончилась. Параметров уже пятнадцать: связанные данные героя
-   по-прежнему лежат отдельными переменными. Так оставлено намеренно:
-   на практике 8 герой и всё состояние игры станут структурами. */
-static int handle_command(char *words[], int count, Map *map, Monsters *monsters,
-                          int *x, int *y, int *hp, int hp_max, unsigned char power,
-                          unsigned int *gold, int depth, unsigned int *states, int *turns,
-                          int items[], int *item_count) {
+/* Выполняет одну команду. Возвращает 0, если игра закончилась. */
+static int handle_command(Game *game, char *words[], int count) {
     const char *name = words[0];
     char *argument = count > 1 ? words[1] : NULL;
     int direction = step_direction(words, count);
     if (direction >= 0) {
-        command_move(map, monsters, direction, x, y, gold, turns);
+        command_move(game, direction);
     } else if (direction == -2) {
         /* go с неверным направлением: сообщение уже напечатано */
     } else if (command_is(name, "attack", "a")) {
-        if (command_attack(map, monsters, argument, *x, *y, power)) {
-            ++*turns;
-        }
+        command_attack(game, argument);
     } else if (command_is(name, "look", "l")) {
-        map_draw(map, *x, *y, monsters->cells, monsters->count);
+        game_draw(game);
     } else if (command_is(name, "monsters", "m")) {
-        print_monsters(map, monsters);
+        print_monsters(&game->monsters);
+    } else if (command_is(name, "level", NULL)) {
+        command_level(game, argument); /* имя файла — без перевода в нижний регистр */
     } else if (command_is(name, "spawn", NULL)) {
-        command_spawn(argument, map, monsters, *x, *y);
+        command_spawn(game, argument);
     } else if (command_is(name, "stress", NULL)) {
-        command_stress(argument, map->width, map->height);
+        command_stress(game, argument);
     } else if (command_is(name, "cell", NULL)) {
-        describe_cell(map, *x, *y);
+        command_cell(game);
     } else if (command_is(name, "check", "c")) {
-        command_check(map, *x, *y);
+        command_check(game);
     } else if (command_is(name, "status", "st")) {
-        print_status(*hp, hp_max, power, *gold, depth, *states);
+        print_status(&game->hero);
     } else if (command_is(name, "inventory", "i")) {
-        print_inventory(items, *item_count);
+        print_inventory(&game->hero);
     } else if (command_is(name, "use", "u")) {
-        command_use(argument, items, item_count, hp, hp_max, states);
+        command_use(&game->hero, argument);
     } else if (command_is(name, "hit", NULL)) {
-        return command_hit(argument, hp, hp_max);
+        return command_hit(&game->hero, argument);
     } else if (command_is(name, "on", NULL) || command_is(name, "off", NULL)
                || command_is(name, "toggle", NULL)) {
-        /* Название состояния сравнивается со словами в нижнем регистре. */
-        if (argument != NULL) {
-            command_to_lower(argument);
-        }
-        change_state(name, argument, states);
-    } else if (command_is(name, "addr", NULL)) {
-        print_addresses(map, monsters, hp, turns);
-    } else if (command_is(name, "stacktest", NULL)) {
-        command_stacktest(argument);
+        command_state(&game->hero, name, argument);
+    } else if (command_is(name, "sizes", NULL)) {
+        print_sizes();
     } else if (command_is(name, "help", "h")) {
         print_commands();
     } else if (command_is(name, "quit", "q")) {
@@ -447,19 +437,25 @@ static int handle_command(char *words[], int count, Map *map, Monsters *monsters
 }
 
 /* Случайные перегородки иногда замуровывают старт или выход. Тогда уровень
-   строится заново со следующим зерном — до ста попыток. Возвращает 1,
-   если построена карта, где выход достижим из (1, 1). */
-static int create_passable_map(Map *map, int width, int height, unsigned int seed) {
+   строится заново со следующим зерном — до ста попыток. */
+static Status create_random_level(Game *game, int width, int height, unsigned int seed) {
     for (int attempt = 0; attempt < 100; ++attempt) {
-        if (!map_create(map, width, height, seed + (unsigned int)attempt)) {
-            return 0; /* неверный размер или нет памяти: другое зерно не поможет */
+        Status status = map_create(&game->map, width, height);
+        if (status != STATUS_OK) {
+            return status; /* неверный размер или нет памяти: другое зерно не поможет */
         }
-        if (reach_exit(map, 1, 1, NULL, NULL) == 1) {
-            return 1;
+        map_generate(&game->map, seed + (unsigned int)attempt);
+        int found = 0;
+        status = reach_exit(&game->map, 1, 1, &found, NULL, NULL);
+        if (status == STATUS_OK && found) {
+            return STATUS_OK;
         }
-        map_destroy(map); /* неудачная карта освобождается перед новой попыткой */
+        map_destroy(&game->map); /* неудачная карта освобождается перед новой попыткой */
+        if (status != STATUS_OK) {
+            return status;
+        }
     }
-    return 0;
+    return STATUS_BAD_SIZE; /* на таком размере проходимый уровень не получился */
 }
 
 /* Разбирает ответ «ширина высота [зерно]». Возвращает 1, если в нём
@@ -475,9 +471,9 @@ static int parse_size(char *words[], int count, int *width, int *height, int *se
     return count < 3 || command_parse_number(words[2], seed) == NUMBER_OK;
 }
 
-/* Спрашивает размеры карты: «ширина высота [зерно]». Пока ответ негоден,
-   переспрашивает. Возвращает 1, если карта создана, и 0, если ввод кончился. */
-static int ask_and_create_map(Map *map) {
+/* Спрашивает размер случайного уровня, пока ответ негоден. Возвращает 1,
+   если уровень построен, и 0, если ввод кончился. */
+static int ask_random_level(Game *game) {
     int created = 0;
     int input_ended = 0;
     while (!created && !input_ended) {
@@ -500,51 +496,74 @@ static int ask_and_create_map(Map *map) {
             input_ended = 1;
         } else if (!parse_size(words, count, &width, &height, &seed)) {
             printf("Two or three numbers separated by spaces are needed.\n\n");
-        } else if (width < MAP_MIN_SIDE || height < MAP_MIN_SIDE
-                   || width > MAP_MAX_WIDTH || height > MAP_MAX_HEIGHT) {
-            printf("This size is not allowed.\n\n");
-        } else if (!create_passable_map(map, width, height, (unsigned int)seed)) {
-            printf("Cannot build a map %d x %d.\n\n", width, height);
         } else {
-            created = 1;
+            Status result = create_random_level(game, width, height, (unsigned int)seed);
+            if (result == STATUS_OK) {
+                created = 1;
+            } else {
+                printf("Level not built: %s.\n\n", status_text(result));
+            }
         }
     }
     return created;
 }
 
-void game_run(void) {
-    printf("Welcome to the dungeon!\n\n");
-    Map map;
-    if (!ask_and_create_map(&map)) {
-        printf("\nGoodbye.\n");
-        return;
+/* Готовит первый уровень: из файла или случайный. Возвращает 0, если
+   играть не на чем. Ошибка файла, заданного при запуске, — ошибка запуска,
+   поэтому она уходит в stderr. */
+static int prepare_level(Game *game, const char *level_path) {
+    if (level_path != NULL) {
+        int bad_line = 0;
+        Status status = level_load(level_path, game, &bad_line);
+        if (status != STATUS_OK) {
+            fprintf(stderr, "Level %s not loaded: %s", level_path, status_text(status));
+            if (bad_line > 0) {
+                fprintf(stderr, " (line %d)", bad_line);
+            }
+            fprintf(stderr, ".\n");
+            return 0;
+        }
+        return 1;
     }
-    Monsters monsters;
-    monsters_init(&monsters);
-    spawn_monsters(&map, &monsters, map.width * map.height / 100 + 1, 1, 1);
+    if (!ask_random_level(game)) {
+        return 0;
+    }
+    int placed = 0;
+    if (spawn_monsters(game, game->map.width * game->map.height / 100 + 1, &placed)
+        != STATUS_OK) {
+        printf("Fewer monsters than planned: not enough memory.\n");
+    }
+    return 1;
+}
 
-    /* Почему выбраны такие типы — см. практику 2. */
-    int x = 1;
-    int y = 1;
-    int hp = 30;
-    int hp_max = 30;
-    unsigned char power = 5;
-    unsigned int gold = 0;
-    int depth = 1;
-    unsigned int states = 0;
-    /* Сумка: в начале четыре предмета, остальные места пустые. */
-    int items[INVENTORY_SIZE] = { ITEM_POTION, ITEM_ANTIDOTE, ITEM_TORCH, ITEM_POTION };
-    int item_count = 4;
+int game_run(const char *level_path) {
+    /* Пустая игра: карты ещё нет, список монстров пуст. Освобождать такую
+       игру безопасно, поэтому выход в конце один на все случаи. */
+    Game game;
+    game.map.cells = NULL;
+    game.map.width = 0;
+    game.map.height = 0;
+    monsters_init(&game.monsters);
+    hero_init(&game.hero, 1, 1);
+    game.turns = 0;
+
+    printf("Welcome to the dungeon!\n\n");
+    int loaded = prepare_level(&game, level_path);
+    if (!loaded) {
+        monsters_destroy(&game.monsters);
+        map_destroy(&game.map);
+        printf("\nGoodbye.\n");
+        return level_path != NULL ? 1 : 0; /* конец ввода при вопросе о размере — не ошибка */
+    }
 
     printf("\n");
-    map_draw(&map, x, y, monsters.cells, monsters.count);
+    game_draw(&game);
     printf("\n");
     print_commands();
 
-    int turns = 0;
     int running = 1;
     while (running) {
-        printf("\nTurn %d > ", turns);
+        printf("\nTurn %d > ", game.turns);
         fflush(stdout);
 
         char line[LINE_SIZE];
@@ -557,19 +576,18 @@ void game_run(void) {
             char *words[WORDS_MAX];
             int count = command_split(line, words, WORDS_MAX);
             if (count > 0) {
-                /* В нижний регистр — только название команды: NORTH и north
-                   одно и то же. Аргументы-слова переводятся там, где их
-                   сравнивают с ключевыми словами. */
+                /* В нижний регистр — только название команды. Аргументы
+                   переводятся там, где их сравнивают с ключевыми словами:
+                   имя файла уровня менять нельзя. */
                 command_to_lower(words[0]);
-                running = handle_command(words, count, &map, &monsters, &x, &y, &hp, hp_max,
-                                         power, &gold, depth, &states, &turns,
-                                         items, &item_count);
+                running = handle_command(&game, words, count);
             }
         }
     }
-    printf("\nGame over. Turns made: %d\n", turns);
+    printf("\nGame over. Turns made: %d\n", game.turns);
 
     /* Каждому выделению — ровно одно освобождение. */
-    monsters_destroy(&monsters);
-    map_destroy(&map);
+    monsters_destroy(&game.monsters);
+    map_destroy(&game.map);
+    return 0;
 }

@@ -3,6 +3,7 @@
 #include "commands.h"
 #include "editor.h"
 #include "input.h"
+#include "ppm.h"
 
 /* Ошибки запуска, после которых программа завершается с ненулевым кодом,
    идут в поток ошибок: так их видно, даже если обычный вывод перенаправлен
@@ -46,10 +47,12 @@ static int run_once(int argc, char *argv[]) {
 
     int result = 0;
     if (editor.loaded) {
-        if (image_save_ppm(&editor.image, editor.path)) {
+        ImgStatus status = ppm_save(&editor.image, editor.path, PPM_TEXT);
+        if (status == IMG_OK) {
             printf("Written: %s\n", editor.path);
         } else {
-            fprintf(stderr, "Cannot write the file: %s\n", editor.path);
+            fprintf(stderr, "Cannot write the file %s: %s\n", editor.path,
+                    img_status_text(status));
             result = 1;
         }
     }

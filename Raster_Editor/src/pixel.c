@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "pixel.h"
 
 #define RED_SHIFT    16
@@ -60,4 +62,17 @@ uint8_t pixel_luminance(Pixel pixel) {
 Pixel pixel_to_gray(Pixel pixel) {
     uint8_t gray = pixel_luminance(pixel);
     return pixel_pack(gray, gray, gray);
+}
+
+Pixel color_to_pixel(const Color *color) {
+    if (color == NULL) {
+        return pixel_pack(0, 0, 0);
+    }
+    return pixel_pack(color->red, color->green, color->blue);
+}
+
+/* Структура из трёх байтов возвращается по значению: копировать её дёшево. */
+Color pixel_to_color(Pixel pixel) {
+    Color color = { pixel_red(pixel), pixel_green(pixel), pixel_blue(pixel) };
+    return color;
 }

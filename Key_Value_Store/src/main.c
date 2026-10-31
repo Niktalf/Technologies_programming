@@ -1,27 +1,39 @@
 #include <stdio.h>
+#include <string.h>
 
 #include "cli.h"
 #include "session.h"
 
+/* Журналы по умолчанию лежат в текущем каталоге. Первый можно
+   заменить ключом -f: ./kvstore -f book.db put name Nikita */
+#define DEFAULT_FIRST  "store1.db"
+#define DEFAULT_SECOND "store2.db"
+
 int main(int argc, char *argv[]) {
-    /* Содержимое хранилищ лежит в куче, поэтому сессия — обычная локальная
-       переменная. Глобальной она не становится: адрес передаётся явно. */
+    const char *first = DEFAULT_FIRST;
+    int shift = 1;
+    if (argc >= 3 && strcmp(argv[1], "-f") == 0) {
+        first = argv[2];
+        shift = 3;
+    }
+
     Session session;
-    if (!session_init(&session)) {
-        fprintf(stderr, "Not enough memory for the stores\n");
+    KvStatus status = session_init(&session, first, DEFAULT_SECOND);
+    if (status != KV_OK) {
+        fprintf(stderr, "Cannot open the stores: %s\n", kv_status_text(status));
         return 1;
     }
 
-    /* С аргументами: одна команда и выход, код возврата 1, если команда
-       не выполнилась. Без аргументов: интерактивный режим. */
+    /* С командой в аргументах: выполнить её и выйти. Без неё: интерактивный режим.
+       Поскольку данные теперь в журнале, можно положить ключ одним запуском
+       и прочитать другим. */
     int result = 0;
-    if (argc > 1) {
-        result = cli_execute(&session, argc - 1, argv + 1) == CLI_ERROR ? 1 : 0;
+    if (argc > shift) {
+        result = cli_execute(&session, argc - shift, argv + shift) == CLI_ERROR ? 1 : 0;
     } else {
         cli_run_interactive(&session);
     }
 
-    /* Выделили — освобождаем. */
     session_destroy(&session);
     return result;
 }

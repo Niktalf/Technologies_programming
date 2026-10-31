@@ -13,6 +13,7 @@ add_library(
         src/input.c
         src/pixel.c
         src/ppm.c
+        src/status.c
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

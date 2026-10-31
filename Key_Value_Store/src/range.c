@@ -117,8 +117,8 @@ static void sorted_free(Sorted *s) {
 
 /* Собирает пары и сортирует их. Возвращает 1 при успехе.
    При неудаче ничего выделенного не остаётся. */
-static int prepare(const Store *store, Sorted *s, int *depth_out) {
-    int total = store_count(store);
+static int prepare(const KvStore *store, Sorted *s, int *depth_out) {
+    int total = kv_count(store);
     s->count = 0;
     s->capacity = total;
     /* +1: malloc от нуля байт вправе вернуть NULL, а пустое хранилище — не ошибка. */
@@ -128,7 +128,7 @@ static int prepare(const Store *store, Sorted *s, int *depth_out) {
         sorted_free(s);
         return 0;
     }
-    store_for_each(store, collect, s);
+    kv_for_each(store, collect, s);
 
     int depth = 0;
     merge_sort(s, 0, s->count, 1, &depth);
@@ -138,7 +138,7 @@ static int prepare(const Store *store, Sorted *s, int *depth_out) {
     return 1;
 }
 
-int range_query(const Store *store, const char *from, const char *to,
+int range_query(const KvStore *store, const char *from, const char *to,
                 RangeVisitor visit, void *context, int *depth_out) {
     if (store == NULL || from == NULL || to == NULL || visit == NULL) {
         return -1;
@@ -160,7 +160,7 @@ int range_query(const Store *store, const char *from, const char *to,
     return last - first;
 }
 
-int range_all(const Store *store, RangeVisitor visit, void *context, int *depth_out) {
+int range_all(const KvStore *store, RangeVisitor visit, void *context, int *depth_out) {
     if (store == NULL || visit == NULL) {
         return -1;
     }
