@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.0)
+cmake_minimum_required(VERSION 3.16)
 project(dungeon LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -12,6 +12,8 @@ add_library(
         src/hero.cpp
         src/level_generator.cpp
         src/map.cpp
+        src/map_view.cpp
+        src/monster.cpp
         src/monster_list.cpp
 )
 

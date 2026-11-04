@@ -2,6 +2,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
 
 #include "map.hpp"
 
@@ -29,11 +30,20 @@ Hero::Hero()
 Hero::Hero(int x, int y, int hp)
     : x_(x), y_(y), hp_(hp), hp_max_(hp),
       items_{ Item::potion, Item::antidote, Item::torch, Item::potion } {
+    // Проверка в конструкторе, а не в вызывающем коде: мест, где создаётся
+    // герой, может быть сколько угодно, а конструктор один.
+    if (hp <= 0) {
+        throw std::invalid_argument("hero health must be positive");
+    }
 }
 
-void Hero::place_at(int x, int y) {
+bool Hero::place_at(const Map& map, int x, int y) {
+    if (!map.walkable(x, y)) {   // walkable сам отвечает false за пределами карты
+        return false;
+    }
     x_ = x;
     y_ = y;
+    return true;
 }
 
 void Hero::target(Direction direction, int& out_x, int& out_y) const {
@@ -71,6 +81,9 @@ bool Hero::move(Direction direction, Map& map) {
 }
 
 void Hero::take_damage(int amount) {
+    if (amount <= 0) {
+        return;
+    }
     hp_ -= amount;
     if (hp_ < 0) {
         hp_ = 0;
@@ -121,20 +134,32 @@ int Hero::state_number(const std::string& word) {
     return -1;
 }
 
+void Hero::check_state(int number) {
+    if (number < 0 || number >= STATE_COUNT) {
+        throw std::out_of_range("no such hero state");
+    }
+}
+
+// Раньше неверный номер читал чужую память за концом массива имён,
+// а сдвиг 1u << 40 — неопределённое поведение. Теперь он отвергается.
 const char* Hero::state_name(int number) {
+    check_state(number);
     return STATE_NAMES[number];
 }
 
 bool Hero::has_state(int number) const {
+    check_state(number);
     return (states_ & (1u << number)) != 0;
 }
 
 void Hero::set_state(int number, bool on) {
+    check_state(number);
     unsigned int mask = 1u << number;
     states_ = on ? states_ | mask : states_ & ~mask;
 }
 
 void Hero::toggle_state(int number) {
+    check_state(number);
     states_ ^= 1u << number;
 }
 
@@ -163,16 +188,4 @@ void Hero::print_inventory() const {
     for (int i = 1; i <= item_count(); ++i) {
         std::cout << "  " << i << ". " << item_name(i) << '\n';
     }
-}
-
-// Явный this. Вызов hero.look(map, monsters) компилятор превращает в вызов
-// обычной функции, которой скрытым первым параметром передан адрес hero —
-// это и есть this. Внутри метода x_ означает this->x_: поле того героя,
-// через которого метод вызван. В этом и отличие вызова метода от вызова
-// функции: в версии на C адрес героя пришлось бы передать явно.
-//
-// Здесь карте нужно передать самого героя, чтобы она узнала, где его
-// нарисовать. Изнутри метода «этот объект» по-другому не назвать: this — его адрес.
-void Hero::look(const Map& map, const MonsterList& monsters) const {
-    map.draw(this, &monsters);
 }

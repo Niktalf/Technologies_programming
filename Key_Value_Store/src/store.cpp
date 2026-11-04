@@ -2,55 +2,26 @@
 
 #include <iostream>
 
-bool Store::trace = false;
-
-KvError::KvError(KvStatus status, const std::string& path)
-    : std::runtime_error(std::string(Store::status_text(status)) + ": " + path),
-      status_(status) {
-}
-
-const char* Store::status_text(KvStatus status) {
-    switch (status) {
-    case KvStatus::ok:
-        return "success";
-    case KvStatus::bad_argument:
-        return "invalid argument";
-    case KvStatus::not_found:
-        return "key not found";
-    case KvStatus::cannot_open:
-        return "cannot open file";
-    case KvStatus::io_error:
-        return "journal read or write error";
-    }
-    return "unknown error";
-}
+bool Store::trace_ = false;
 
 // Список инициализации: journal_ создаётся до входа в тело конструктора.
 // Если его конструктор возбудит исключение, тело Store не выполнится,
 // и объекта Store не будет вовсе.
 Store::Store(const std::string& path)
     : journal_(path) {
-    // Читаем журнал от начала и собираем таблицу. Первая запись, которая
-    // не читается целиком или не сходится по контрольной сумме, означает
-    // конец пригодных данных: всё дальше отбрасывается.
-    journal_.rewind_for_reading();
-    Record record;
-    Record::ReadResult result = journal_.read_next(record);
-    while (result == Record::ReadResult::record) {
+    // Журнал отдаёт все целые записи по порядку и сам отрезает повреждённый
+    // хвост. Если он возбудит исключение, объекта Store не будет, но уже
+    // созданное поле journal_ разрушится своим деструктором — файл всё
+    // равно закроется.
+    std::vector<Record> records;
+    broken_ = journal_.recover(records);
+    // Таблица собирается применением записей по порядку — это и есть
+    // первая половина инварианта.
+    for (const Record& record : records) {
         apply_in_memory(record);
         ++records_;
-        result = journal_.read_next(record);
     }
-    // Повреждённый хвост — след аварии на середине записи. Он отрезается,
-    // иначе новые записи легли бы после мусора и при следующем открытии
-    // не прочитались бы. Если обрезка возбудит исключение, объекта Store
-    // не будет, но уже созданное поле journal_ разрушится своим
-    // деструктором — файл всё равно закроется.
-    if (result == Record::ReadResult::broken) {
-        ++broken_;
-        journal_.cut_after_last_record();
-    }
-    if (trace) {
+    if (trace_) {
         std::cout << "  [Store] opened " << path << ", keys " << data_.size() << '\n';
     }
 }
@@ -58,7 +29,7 @@ Store::Store(const std::string& path)
 Store::~Store() {
     // Закрывать журнал здесь не нужно: после тела этого деструктора
     // автоматически вызовется деструктор поля journal_.
-    if (trace && journal_.is_open()) {
+    if (trace_ && journal_.is_open()) {
         std::cout << "  [Store] closing " << journal_.path() << '\n';
     }
 }
@@ -89,7 +60,7 @@ KvStatus Store::apply(const Record& record, bool& existed) {
     }
     // Сначала журнал, потом память. Если запись в журнал не удалась,
     // append возбудит исключение, и таблица останется прежней.
-    journal_.append(record.encode());
+    journal_.append(record);
     ++records_;
     apply_in_memory(record);
     return KvStatus::ok;

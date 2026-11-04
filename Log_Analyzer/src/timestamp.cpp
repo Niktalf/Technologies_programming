@@ -30,8 +30,8 @@ bool read_digits(const std::string& text, std::size_t from, std::size_t count, i
 Timestamp Timestamp::from_parts(int year, int month, int day, int hour, int minute,
                                 int second) {
     Timestamp result;
-    if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23
-        || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    if (year < MIN_YEAR || year > MAX_YEAR || month < 1 || month > 12 || day < 1 || day > 31
+        || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
         return result;   // недействительный
     }
     long long value = year;
@@ -68,8 +68,15 @@ Timestamp Timestamp::parse(const std::string& date, const std::string& time) {
 }
 
 Timestamp Timestamp::from_value(long long value) {
+    // Любое число между упакованными границами распаковывается в верные
+    // месяц, день, час, минуту и секунду: каждая часть — остаток от деления
+    // на свою длину. Поэтому достаточно проверить сами границы.
+    long long lowest = from_parts(MIN_YEAR, 1, 1, 0, 0, 0).value_;
+    long long highest = from_parts(MAX_YEAR, 12, 31, 23, 59, 59).value_;
     Timestamp result;
-    result.value_ = value;
+    if (value >= lowest && value <= highest) {
+        result.value_ = value;
+    }
     return result;
 }
 

@@ -1,30 +1,33 @@
 #pragma once
 
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "journal_file.hpp"
+#include "kvstore.hpp"
 #include "record.hpp"
 
-// Результат операции хранилища — те же коды, что KvStatus в версии на C.
-enum class KvStatus { ok, bad_argument, not_found, cannot_open, io_error };
-
-// Практика 10: ошибка открытия и записи приходит исключением. KvError —
-// наследник std::runtime_error, кроме текста хранит код.
-class KvError : public std::runtime_error {
-public:
-    KvError(KvStatus status, const std::string& path);
-
-    KvStatus status() const { return status_; }
-
-private:
-    KvStatus status_;
-};
-
-// Хранилище ключ-значение с журналом на диске.
+// Хранилище ключ-значение с журналом на диске. Внутренний класс
+// библиотеки: клиенты видят его только через KvStore из include/kvstore.hpp.
+// Консоль — инструмент самой библиотеки, ей нужны подробности журнала
+// (команды stats и record), поэтому она работает с этим классом напрямую.
+//
+// Инвариант — то, что связывает таблицу в памяти и журнал на диске:
+//   * data_ — ровно то, что получится, если применить по порядку все
+//     целые записи журнала к пустой таблице;
+//   * records_ — число целых записей в журнале, и
+//     records_ == data_.size() + garbage_: каждая запись либо держит живую
+//     пару, либо уже не нужна;
+//   * broken_ — сколько записей отброшено при открытии, 0 или 1.
+// Держится он порядком действий в apply: сначала запись в журнал, потом
+// таблица. Если запись в журнал не удалась, исключение вылетит раньше,
+// чем таблица изменится. У закрытого хранилища всё по нулям.
+//
+// Практика 11: хранилище больше не работает с файлом. Чтение журнала,
+// обрезка хвоста, байты записей — внутри JournalFile; здесь — таблица
+// и логика операций.
 //
 // Практика 10: хранилище открывается конструктором и закрывается
 // деструктором. Конструктор открывает журнал, перечитывает его и собирает
@@ -38,8 +41,6 @@ private:
 // а JournalFile умеет перемещаться сам.
 class Store {
 public:
-    static const char* status_text(KvStatus status);
-
     // Закрытое хранилище: журнала нет, таблица пуста.
     Store() = default;
 
@@ -77,7 +78,8 @@ public:
     // Все пары в порядке таблицы, то есть в произвольном.
     std::vector<std::pair<std::string, std::string>> pairs() const;
 
-    static bool trace;
+    // На практике 10 это было открытое статическое поле; теперь флаг закрыт.
+    static void set_trace(bool on) { trace_ = on; }
 
 private:
     void apply_in_memory(const Record& record);
@@ -89,4 +91,6 @@ private:
     long records_ = 0;   // записей в журнале
     long garbage_ = 0;   // из них уже не нужных
     long broken_ = 0;    // записей, отброшенных при открытии как повреждённые
+
+    static bool trace_;
 };

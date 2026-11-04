@@ -3,8 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "editor.hpp"
+#include "../../../../../Technologies_programming/Raster_Editor/include/editor.hpp"
 
+// Практика 11: поля всех классов закрыты, инварианты записаны, работа
+// с файлами PPM вынесена из изображения в класс PpmFile.
+//
 // Практика 10: изображение само выделяет и освобождает память под пиксели.
 // Всё, что умел редактор на практике 9, осталось; добавились команды demo
 // и stress — опыты со временем жизни, копированием и перемещением.
@@ -48,7 +51,7 @@ int run_once(int argc, char* argv[]) {
     ImageStatus status = editor.save_to_path();
     if (status != ImageStatus::ok) {
         std::cerr << "Cannot write the file " << editor.path() << ": "
-                  << Image::status_text(status) << '\n';
+                  << status_text(status) << '\n';
         return 1;
     }
     std::cout << "Written: " << editor.path() << '\n';

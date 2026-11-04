@@ -5,7 +5,7 @@
 
 #include "status.hpp"
 
-bool FileReader::trace = false;
+bool FileReader::trace_ = false;
 int FileReader::open_count_ = 0;
 
 FileReader::FileReader(const std::string& path)
@@ -17,7 +17,7 @@ FileReader::FileReader(const std::string& path)
         throw LogError(LogStatus::cannot_open, path);
     }
     ++open_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [FileReader] opened " << path_ << '\n';
     }
 }
@@ -29,7 +29,7 @@ void FileReader::close() noexcept {
     std::fclose(file_);
     file_ = nullptr;
     --open_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [FileReader] closed " << path_ << '\n';
     }
 }
@@ -41,7 +41,7 @@ FileReader::~FileReader() {
 FileReader::FileReader(FileReader&& other) noexcept
     : file_(other.file_), path_(std::move(other.path_)) {
     other.file_ = nullptr;   // прежний владелец больше ничего не закроет
-    if (trace) {
+    if (trace_) {
         std::cout << "  [FileReader] moved " << path_ << " to a new object\n";
     }
 }

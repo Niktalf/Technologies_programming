@@ -12,6 +12,10 @@
 // shell_run, порядок просмотра — статическими переменными модуля view,
 // а функции команд получали журнал параметром. Здесь всё это — поля
 // одного объекта, а команды — его закрытые методы.
+//
+// Инвариант: если журнал не загружен, вид view_ пуст; если загружен,
+// указатели вида смотрят в записи текущего журнала. Поэтому каждая
+// команда, которая заменяет или сортирует журнал, сбрасывает вид.
 class Shell {
 public:
     // Загружает журнал при запуске. Ошибка — LogError, как у конструктора
@@ -44,6 +48,7 @@ private:
     void command_level(const std::vector<std::string>& words);
     static void command_time();
     void command_demo();
+    static void try_to_break();
     void command_stress(const std::vector<std::string>& words);
     static void print_help();
 

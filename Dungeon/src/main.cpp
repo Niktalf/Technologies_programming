@@ -7,6 +7,10 @@
 
 #include "game.hpp"
 
+// Практика 11: поля всех классов закрыты, у каждого класса записан инвариант,
+// отрисовка вынесена из карты в класс MapView. Опыт 7 в demo пробует
+// нарушить инварианты снаружи.
+//
 // Практика 10: карта произвольного размера или из файла; память под клетки
 // выделяет конструктор, освобождает деструктор. Явного освобождения памяти
 // вне деструкторов в программе нет, кроме опыта 3 в demo, где объект
@@ -135,11 +139,54 @@ int play_level_file(const char* path) {
     return 0;
 }
 
-// Опыты со временем жизни. Map::trace включает сообщения из конструкторов,
+// Опыт 7: попытки нарушить инварианты открытыми вызовами. Каждая либо
+// отвергнута, либо приведена к допустимому состоянию.
+void try_to_break() {
+    std::cout << "7. Trying to break the invariants from outside:\n";
+    try {
+        Hero broken(1, 1, -5);
+        std::cout << "  a hero with health -5 was created - the invariant is broken!\n";
+    } catch (const std::invalid_argument& error) {
+        std::cout << "  Hero(1, 1, -5): rejected - " << error.what() << '\n';
+    }
+
+    Hero hero(1, 1, 20);
+    hero.take_damage(-100);   // лечение через отрицательный урон
+    std::cout << "  take_damage(-100): health " << hero.hp() << " / " << hero.hp_max() << '\n';
+    hero.take_damage(1000);
+    std::cout << "  take_damage(1000): health " << hero.hp() << ", not negative\n";
+    try {
+        hero.set_state(40, true);
+        std::cout << "  state 40 was set - the invariant is broken!\n";
+    } catch (const std::out_of_range& error) {
+        std::cout << "  set_state(40): rejected - " << error.what() << '\n';
+    }
+
+    Map map(8, 6);
+    std::cout << "  set_tile with 'X': " << (map.set_tile(3, 3, 'X') ? "done" : "rejected")
+              << '\n';
+    std::cout << "  a wall on the start cell: "
+              << (map.set_tile(map.start_x(), map.start_y(), Map::WALL) ? "done" : "rejected")
+              << '\n';
+    std::cout << "  place the hero into the border wall: "
+              << (hero.place_at(map, 0, 0) ? "done" : "rejected") << '\n';
+
+    MonsterList monsters;
+    int before = Monster::created_count();
+    monsters.add(2, 2);
+    std::cout << "  a second monster in the same cell: "
+              << (monsters.add(2, 2) ? "added" : "rejected") << '\n';
+    std::cout << "  hit with damage 100: health left " << monsters.hit(0, 100)
+              << ", monsters in the list " << monsters.count() << '\n';
+    std::cout << "  monsters created in this experiment: " << Monster::created_count() - before
+              << ", total since the start: " << Monster::created_count() << '\n';
+}
+
+// Опыты со временем жизни. Map::set_trace включает сообщения из конструкторов,
 // деструктора и перемещений карты, Map::live_count показывает, сколько карт
 // владеют клетками.
 void demo() {
-    Map::trace = true;
+    Map::set_trace(true);
 
     std::cout << "1. A stack object is destroyed when the block ends:\n";
     {
@@ -210,7 +257,9 @@ void demo() {
     by_default.print_status();
     custom.print_status();
 
-    Map::trace = false;
+    Map::set_trace(false);
+    std::cout << '\n';
+    try_to_break();
 }
 
 } // namespace

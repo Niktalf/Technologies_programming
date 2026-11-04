@@ -9,18 +9,18 @@ constexpr std::uint32_t CHANNEL_MASK = 0xFFu;   // восемь младших �
 
 } // namespace
 
-Color Color::from_rgb(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
+Color Color::from_rgb(int red, int green, int blue) {
     Color color;
-    color.red_ = red;   // закрытые поля доступны: метод принадлежит тому же классу
-    color.green_ = green;
-    color.blue_ = blue;
+    color.red_ = clamp(red);   // закрытые поля доступны: метод принадлежит тому же классу
+    color.green_ = clamp(green);
+    color.blue_ = clamp(blue);
     return color;
 }
 
 Color Color::from_packed(std::uint32_t packed) {
-    return from_rgb(static_cast<std::uint8_t>((packed >> RED_SHIFT) & CHANNEL_MASK),
-                    static_cast<std::uint8_t>((packed >> GREEN_SHIFT) & CHANNEL_MASK),
-                    static_cast<std::uint8_t>(packed & CHANNEL_MASK));
+    return from_rgb(static_cast<int>((packed >> RED_SHIFT) & CHANNEL_MASK),
+                    static_cast<int>((packed >> GREEN_SHIFT) & CHANNEL_MASK),
+                    static_cast<int>(packed & CHANNEL_MASK));
 }
 
 std::uint32_t Color::packed() const {
@@ -75,7 +75,5 @@ Color Color::to_gray() const {
 }
 
 Color Color::inverted() const {
-    return from_rgb(static_cast<std::uint8_t>(CHANNEL_MAX - red_),
-                    static_cast<std::uint8_t>(CHANNEL_MAX - green_),
-                    static_cast<std::uint8_t>(CHANNEL_MAX - blue_));
+    return from_rgb(CHANNEL_MAX - red_, CHANNEL_MAX - green_, CHANNEL_MAX - blue_);
 }

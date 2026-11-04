@@ -3,12 +3,11 @@
 #include <fstream>
 #include <iostream>
 
-#include "hero.hpp"
 #include "monster_list.hpp"
 
 // Статические поля объявлены в классе, а определяются здесь, один раз
 // на всю программу.
-bool Map::trace = false;
+bool Map::trace_ = false;
 int Map::live_count_ = 0;
 
 LevelError::LevelError(LoadStatus status, int line)
@@ -77,7 +76,7 @@ Map::Map(int width, int height)
     cells_ = new char[static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)];
     clear();
     ++live_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [Map] created " << name_ << '\n';
     }
 }
@@ -137,7 +136,7 @@ Map::Map(const std::string& path, MonsterList& monsters)
     // забрать содержимое found, а не копировать его.
     monsters = std::move(found);
     ++live_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [Map] loaded " << name_ << ", " << width_ << " x " << height_ << '\n';
     }
 }   // file закрывается здесь сам: деструктор std::ifstream
@@ -145,7 +144,7 @@ Map::Map(const std::string& path, MonsterList& monsters)
 Map::~Map() {
     if (cells_ != nullptr) {
         --live_count_;   // пустая карта после перемещения клетками не владеет
-        if (trace) {
+        if (trace_) {
             std::cout << "  [Map] destroyed " << name_ << '\n';
         }
     }
@@ -169,7 +168,7 @@ void Map::take_from(Map& other) {
 // не выделяется, клетки не копируются — переезжает один указатель.
 Map::Map(Map&& other) noexcept {
     take_from(other);
-    if (trace) {
+    if (trace_) {
         std::cout << "  [Map] moved " << name_ << " to a new object\n";
     }
 }
@@ -183,19 +182,21 @@ Map& Map::operator=(Map&& other) noexcept {
     }
     if (cells_ != nullptr) {
         --live_count_;
-        if (trace) {
+        if (trace_) {
             std::cout << "  [Map] destroyed " << name_ << " (replaced)\n";
         }
     }
     delete[] cells_;
     take_from(other);
-    if (trace) {
+    if (trace_) {
         std::cout << "  [Map] moved " << name_ << " into an existing object\n";
     }
     return *this;
 }
 
 void Map::clear() {
+    start_x_ = 1;
+    start_y_ = 1;
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             bool border = x == 0 || y == 0 || x == width_ - 1 || y == height_ - 1;
@@ -212,30 +213,17 @@ char Map::tile(int x, int y) const {
     return inside(x, y) ? cells_[index(x, y)] : WALL;
 }
 
-void Map::set_tile(int x, int y, char value) {
-    if (inside(x, y)) {
-        cells_[index(x, y)] = value;
+bool Map::set_tile(int x, int y, char value) {
+    bool start = x == start_x_ && y == start_y_;
+    if (!inside(x, y) || !is_tile(value) || (start && value == WALL)) {
+        return false;
     }
+    cells_[index(x, y)] = value;
+    return true;
 }
 
 bool Map::walkable(int x, int y) const {
     return tile(x, y) != WALL;   // tile сам проверяет границы
-}
-
-void Map::draw(const Hero* hero, const MonsterList* monsters) const {
-    for (int y = 0; y < height_; ++y) {
-        for (int x = 0; x < width_; ++x) {
-            char shown = cells_[index(x, y)];
-            if (monsters != nullptr && monsters->find(x, y) >= 0) {
-                shown = 'M';
-            }
-            if (hero != nullptr && hero->x() == x && hero->y() == y) {
-                shown = '@';
-            }
-            std::cout << shown;
-        }
-        std::cout << '\n';
-    }
 }
 
 const char* Map::status_text(LoadStatus status) {

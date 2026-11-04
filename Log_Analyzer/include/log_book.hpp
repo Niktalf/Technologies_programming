@@ -1,14 +1,32 @@
 #pragma once
 
-#include <istream>
 #include <string>
 #include <vector>
 
 #include "level.hpp"
 #include "log_record.hpp"
-#include "status.hpp"
 
 // Журнал — класс, хранящий записи.
+//
+// Инвариант:
+//   * count() + broken() <= lines(): каждая запись и каждая испорченная
+//     строка пришли из своей строки файла;
+//   * если sorted(), записи упорядочены по времени — на этом держится
+//     двоичный поиск в search_not_before;
+//   * если не loaded(), журнал пуст: нет записей, имени файла и строк.
+// Каждая запись верна по инварианту LogRecord — это обеспечивает её
+// конструктор, и журнал ничего в записях не перепроверяет.
+//
+// Записи журнал отдаёт только по константной ссылке: at(i). Метод,
+// отдающий изменяемую ссылку на records_, отменил бы весь инвариант:
+// вызывающий мог бы очистить вектор, переставить записи в отсортированном
+// журнале — и sorted() врал бы, а поиск находил бы не то.
+//
+// Практика 11: журнал больше не читает файлы. На практике 10 в нём был
+// разбор строк текстового журнала и чтение и запись двоичного. Теперь это
+// классы LogParser и BinaryLog, а журнал только хранит записи и даёт к ним
+// доступ. Появится третий формат — изменится не журнал, а появится ещё
+// один класс рядом с ними.
 //
 // Практика 10: журнал получает содержимое через конструктор. Отдельного
 // load больше нет: объект либо создан и наполнен, либо не создан вовсе.
@@ -28,19 +46,11 @@ public:
     // Пустой журнал: ничего не загружено.
     LogBook() = default;
 
-    // Читает текстовый журнал. Файл открывает и закрывает FileReader.
-    // Если файл не открылся или не читается — LogError, и журнала нет.
-    explicit LogBook(const std::string& path);
-
-    // Двоичный журнал (практика 8): тот же формат, что у версии на C,
-    // файлы обеих версий взаимозаменяемы. Чтение возвращает новый журнал
-    // по значению; ошибка в файле — LogError.
-    LogStatus save_binary(const std::string& path) const;
-    static LogBook from_binary(const std::string& path);
-
-    // Для опыта с исключением: читает файл, как конструктор, но на строке
-    // номер fail_at возбуждает исключение. Файл всё равно закрывается.
-    static void read_until_failure(const std::string& path, long fail_at);
+    // Журнал из готовых записей файла path: lines строк, из них broken
+    // испорченных. Если числа не сходятся с инвариантом —
+    // std::invalid_argument. Записи принимаются по значению и перемещаются
+    // внутрь: тот, кто их собрал, отдаёт вектор без копирования.
+    LogBook(std::string path, std::vector<LogRecord> records, long lines, long broken);
 
     bool loaded() const { return loaded_; }
     bool sorted() const { return sorted_; }
@@ -49,8 +59,8 @@ public:
 
     long count() const { return static_cast<long>(records_.size()); }
 
-    // Запись по номеру. Номер должен быть меньше count(): проверять его —
-    // дело вызывающего, как и при обращении к массиву в C.
+    // Запись по номеру, только для чтения. Номер должен быть меньше count():
+    // проверять его — дело вызывающего, как и при обращении к массиву в C.
     const LogRecord& at(long index) const { return records_[static_cast<std::size_t>(index)]; }
 
     // Сводка после загрузки: файл, строки, записи, испорченные строки.
@@ -96,7 +106,6 @@ private:
     void merge_sort(std::size_t left, std::size_t right, int depth, int& max_depth);
     void merge(std::size_t left, std::size_t middle, std::size_t right);
     long lower_bound(long low, long high, Timestamp moment) const;
-    static LogStatus read_binary_record(std::istream& file, LogRecord& record);
 
     std::vector<LogRecord> records_;
     std::vector<LogRecord> buffer_;   // временный массив для слияния

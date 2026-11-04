@@ -10,6 +10,8 @@ add_library(
         src/color.cpp
         src/editor.cpp
         src/image.cpp
+        src/ppm_file.cpp
+        src/status.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

@@ -9,8 +9,20 @@
 // На практике 2 упаковка и распаковка были функциями timestamp_pack
 // и timestamp_unpack. Здесь число спрятано в класс, и снаружи его можно
 // только сравнить, напечатать или узнать час.
+//
+// Инвариант: value_ == -1 (недействительный момент) или value_ — упакованный
+// момент с годом от MIN_YEAR до MAX_YEAR включительно. Поэтому любые два
+// действительных момента сравнимы, а text() всегда даёт четыре цифры года.
+// Все пути внутрь — from_parts, parse и from_value — проверяют пределы;
+// число вне пределов даёт недействительный момент, а не «какой-нибудь».
 class Timestamp {
 public:
+    // Разумные границы года. На практике 10 годился любой неотрицательный
+    // год, и from_value из испорченного двоичного файла мог дать год
+    // в миллион — text() печатал его семью цифрами.
+    static constexpr int MIN_YEAR = 1970;
+    static constexpr int MAX_YEAR = 9999;
+
     // Момент по частям. Если части вне допустимых пределов, результат
     // недействителен: valid() вернёт false.
     static Timestamp from_parts(int year, int month, int day, int hour, int minute, int second);
@@ -20,7 +32,8 @@ public:
     static Timestamp parse(const std::string& text);
     static Timestamp parse(const std::string& date, const std::string& time);
 
-    // Момент по готовому числу — из двоичного файла.
+    // Момент по готовому числу — из двоичного файла. Число вне пределов
+    // даёт недействительный момент.
     static Timestamp from_value(long long value);
 
     bool valid() const { return value_ >= 0; }

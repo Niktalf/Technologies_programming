@@ -1,16 +1,9 @@
 #pragma once
 
-#include <istream>
-#include <string>
+#include <cstddef>
 
 #include "color.hpp"
-
-// Результат операции, которая может не получиться.
-enum class ImageStatus { ok, cannot_open, bad_format, corrupt, too_large, bad_argument,
-                         write_failed };
-
-// Разновидность файла PPM: текстовая P3 или двоичная P6.
-enum class PpmFormat { text, binary };
+#include "status.hpp"
 
 // Итог заливки: сколько точек перекрашено и сколько их ждало проверки
 // одновременно.
@@ -19,6 +12,26 @@ struct FillReport {
     int max_stack = 0;
 };
 
+// Изображение: размеры и пиксели.
+//
+// Инвариант. Изображение либо пустое — 0 на 0, pixels_ == nullptr, — либо:
+//   * 1 <= width() <= MAX_SIDE и 1 <= height() <= MAX_SIDE;
+//   * pixels_ указывает на блок ровно из width() * height() цветов;
+//   * каждый канал каждого пикселя в пределах 0..255 (это инвариант Color).
+// Доступ по координатам проверяет границы: pixel за пределами отвечает
+// чёрным, set_pixel за пределами ничего не пишет. Размеры меняются только
+// вместе с буфером — конструктором, присваиванием или преобразованием,
+// которое строит новый объект и перемещает его на место этого.
+//
+// Чего класс не даёт: указателя или ссылки на буфер. Отдай он Color* —
+// вызывающий мог бы писать за концом блока или хранить указатель после
+// того, как crop освободил буфер, и никакие проверки в set_pixel уже
+// не помогли бы.
+//
+// Практика 11: изображение больше не работает с файлами. Чтение и запись
+// PPM — класс PpmFile. Изображение хранит пиксели и даёт к ним доступ,
+// а в каком формате их хранить на диске — не его дело.
+//
 // Практика 10: изображение само управляет своей памятью.
 //
 // Конструктор получает размеры и выделяет буфер пикселей ровно под них,
@@ -33,8 +46,6 @@ struct FillReport {
 class Image {
 public:
     static constexpr int MAX_SIDE = 8192;
-
-    static const char* status_text(ImageStatus status);
 
     // Пустое изображение 0 на 0 без буфера. Так выглядит редактор, в котором
     // ещё ничего не открыто, и объект, из которого переместили пиксели.
@@ -92,18 +103,15 @@ public:
     ImageStatus rotate(int angle);
     ImageStatus scale(int width, int height);
 
-    // Чтение и запись PPM. При ошибке чтения изображение не меняется.
-    ImageStatus load(const std::string& path, PpmFormat& format);
-    ImageStatus save(const std::string& path, PpmFormat format) const;
-
     // Одна строка: номер объекта, размер, углы, самая тёмная и самая
     // светлая точка. Нужна опытам demo.
     void print_short() const;
 
     // Сколько изображений владеют буфером прямо сейчас и печатать ли
-    // сообщения из конструкторов, деструктора и перемещений.
+    // сообщения из конструкторов, деструктора и перемещений. На практике 10
+    // trace был открытым статическим полем; теперь флаг закрыт.
     static int live_count() { return live_count_; }
-    static bool trace;
+    static void set_trace(bool on) { trace_ = on; }
 
 private:
     // Как разложены пиксели — внутреннее дело класса.
@@ -111,8 +119,6 @@ private:
     std::size_t count() const {
         return static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
     }
-
-    ImageStatus read_pixels(std::istream& file, PpmFormat format, int maximum);
 
     // Отдаёт этому объекту буфер и размеры other, оставляя other пустым.
     void take_from(Image& other);
@@ -126,4 +132,5 @@ private:
 
     static int live_count_;
     static int next_id_;
+    static bool trace_;
 };

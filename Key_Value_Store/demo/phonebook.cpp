@@ -1,14 +1,20 @@
-// Демонстрационная программа: телефонный справочник поверх класса Store.
+// Демонстрационная программа: телефонный справочник поверх библиотеки.
 //
-// Она знает только открытые методы хранилища и ничего не знает ни про
-// хеш-таблицу, ни про формат журнала. Если завтра внутренности Store
-// переписать целиком, эту программу менять не придётся.
+// Практика 11: справочник включает только публичный заголовок kvstore.hpp
+// и знает только класс KvStore. Ни хеш-таблицы, ни формата записей, ни
+// журнала он не видит: CMake даёт ему один каталог include/, и внутренние
+// заголовки из src/ ему просто недоступны. Если завтра внутренности
+// библиотеки переписать целиком, эту программу менять не придётся.
+//
+// На практике 10 справочник печатал число записей в журнале и число
+// ненужных — для этого ему нужен был сам Store. Такие подробности
+// пользователю справочника ни к чему, и из публичного интерфейса их нет.
 
 #include <iomanip>
 #include <iostream>
 #include <string>
 
-#include "store.hpp"
+#include "../include/kvstore.hpp"
 
 namespace {
 
@@ -20,18 +26,17 @@ void print_usage(const char* program) {
               << "  " << program << " <file> list\n";
 }
 
-int add(Store& book, const std::string& name, const std::string& phone) {
-    bool existed = false;
-    KvStatus status = book.put(name, phone, existed);
+int add(KvStore& book, const std::string& name, const std::string& phone) {
+    KvStatus status = book.put(name, phone);
     if (status != KvStatus::ok) {
-        std::cout << "Cannot save: " << Store::status_text(status) << '\n';
+        std::cout << "Cannot save: " << status_text(status) << '\n';
         return 1;
     }
     std::cout << "Saved.\n";
     return 0;
 }
 
-int find(const Store& book, const std::string& name) {
+int find(const KvStore& book, const std::string& name) {
     std::string phone;
     if (book.get(name, phone) != KvStatus::ok) {
         std::cout << "No such name.\n";
@@ -41,17 +46,17 @@ int find(const Store& book, const std::string& name) {
     return 0;
 }
 
-int remove_entry(Store& book, const std::string& name) {
+int remove_entry(KvStore& book, const std::string& name) {
     KvStatus status = book.remove(name);
     if (status != KvStatus::ok) {
-        std::cout << "Cannot delete: " << Store::status_text(status) << '\n';
+        std::cout << "Cannot delete: " << status_text(status) << '\n';
         return 1;
     }
     std::cout << "Deleted.\n";
     return 0;
 }
 
-int list(const Store& book) {
+int list(const KvStore& book) {
     int shown = 0;
     for (const auto& entry : book.pairs()) {
         std::cout << "  " << std::left << std::setw(20) << entry.first << std::right << ' '
@@ -63,8 +68,6 @@ int list(const Store& book) {
     } else {
         std::cout << "Entries total: " << shown << '\n';
     }
-    std::cout << "Journal records: " << book.journal_records()
-              << ", no longer needed among them: " << book.journal_garbage() << '\n';
     return 0;
 }
 
@@ -76,8 +79,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     try {
-        Store book(argv[1]);
-        if (book.recovered_broken() > 0) {
+        KvStore book(argv[1]);
+        if (book.repaired()) {
             std::cout << "Warning: the end of the file was damaged and discarded.\n";
         }
         const std::string action = argv[2];
