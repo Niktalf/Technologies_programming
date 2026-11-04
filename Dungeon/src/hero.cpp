@@ -13,9 +13,11 @@ const char* const STATE_NAMES[Hero::STATE_COUNT] = {
     "poisoned", "blinded", "invisible", "petrified", "burning", "asleep"
 };
 
-// Номера битов, которые снимают противоядие и факел.
+// Номера битов: яд и слепоту снимают противоядие и факел, яд и огонь
+// отнимают здоровье в конце каждого хода.
 constexpr int STATE_POISONED = 0;
 constexpr int STATE_BLINDED = 1;
+constexpr int STATE_BURNING = 4;
 
 } // namespace
 
@@ -25,15 +27,26 @@ Hero::Hero()
     : Hero(1, 1) {
 }
 
-// Список инициализации: поля получают значения до входа в тело
-// конструктора, в порядке объявления в классе.
+// Первым в списке инициализации стоит конструктор базового класса: сначала
+// строится часть Creature — координаты и здоровье, — потом поля героя.
+// Здоровье проверяет конструктор Creature: проверка в одном месте на всех
+// существ.
 Hero::Hero(int x, int y, int hp)
-    : x_(x), y_(y), hp_(hp), hp_max_(hp),
+    : Creature(x, y, hp),
       items_{ Item::potion, Item::antidote, Item::torch, Item::potion } {
-    // Проверка в конструкторе, а не в вызывающем коде: мест, где создаётся
-    // герой, может быть сколько угодно, а конструктор один.
-    if (hp <= 0) {
-        throw std::invalid_argument("hero health must be positive");
+}
+
+// Яд и огонь — то, что происходит с героем само, в конце каждого хода.
+void Hero::act(Game&) {
+    if (has_state(STATE_POISONED)) {
+        take_damage(POISON_DAMAGE);
+        std::cout << "The poison takes " << POISON_DAMAGE << " health. Health: " << hp()
+                  << " / " << hp_max() << '\n';
+    }
+    if (has_state(STATE_BURNING)) {
+        take_damage(FIRE_DAMAGE);
+        std::cout << "The fire takes " << FIRE_DAMAGE << " health. Health: " << hp()
+                  << " / " << hp_max() << '\n';
     }
 }
 
@@ -41,14 +54,13 @@ bool Hero::place_at(const Map& map, int x, int y) {
     if (!map.walkable(x, y)) {   // walkable сам отвечает false за пределами карты
         return false;
     }
-    x_ = x;
-    y_ = y;
+    move_to(x, y);   // поля координат закрыты в Creature, меняет их защищённый метод
     return true;
 }
 
 void Hero::target(Direction direction, int& out_x, int& out_y) const {
-    out_x = x_;
-    out_y = y_;
+    out_x = x();
+    out_y = y();
     if (direction == Direction::north) {
         --out_y;   // север — к меньшему номеру строки
     } else if (direction == Direction::south) {
@@ -67,27 +79,16 @@ bool Hero::move(Direction direction, Map& map) {
     if (!map.walkable(nx, ny)) {
         return false;
     }
-    x_ = nx;
-    y_ = ny;
-    if (map.tile(x_, y_) == Map::GOLD) {
+    move_to(nx, ny);
+    if (map.tile(nx, ny) == Map::GOLD) {
         gold_ += GOLD_PER_PILE;
-        map.set_tile(x_, y_, Map::FLOOR);
+        map.set_tile(nx, ny, Map::FLOOR);
         std::cout << "The hero picks up " << GOLD_PER_PILE << " gold. Total: " << gold_ << '\n';
     }
-    if (map.tile(x_, y_) == Map::EXIT) {
+    if (map.tile(nx, ny) == Map::EXIT) {
         std::cout << "Here is the exit to the next floor. Going down comes later.\n";
     }
     return true;
-}
-
-void Hero::take_damage(int amount) {
-    if (amount <= 0) {
-        return;
-    }
-    hp_ -= amount;
-    if (hp_ < 0) {
-        hp_ = 0;
-    }
 }
 
 const char* Hero::item_name(int number) const {
@@ -110,10 +111,7 @@ bool Hero::use_item(int number) {
     }
     auto position = items_.begin() + (number - 1);
     if (*position == Item::potion) {
-        hp_ += POTION_HEAL;
-        if (hp_ > hp_max_) {
-            hp_ = hp_max_;
-        }
+        heal(POTION_HEAL);   // насыщение до максимума — забота Creature
     } else if (*position == Item::antidote) {
         set_state(STATE_POISONED, false);
     } else {
@@ -164,8 +162,8 @@ void Hero::toggle_state(int number) {
 }
 
 void Hero::print_status() const {
-    double percent = static_cast<double>(hp_) / hp_max_ * 100.0;
-    std::cout << "Health: " << hp_ << " / " << hp_max_ << " (" << std::fixed
+    double percent = static_cast<double>(hp()) / hp_max() * 100.0;
+    std::cout << "Health: " << hp() << " / " << hp_max() << " (" << std::fixed
               << std::setprecision(1) << percent << "%)\n";
     std::cout << "Attack: " << static_cast<int>(attack_) << ", gold: " << gold_
               << ", floor: " << depth_ << '\n';

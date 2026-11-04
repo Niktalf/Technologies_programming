@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-#include "store.hpp"
+#include "engine.hpp"
 
 // Пары хранилища, упорядоченные по ключу (практика 4): сортировка слиянием
 // и двоичный поиск границ диапазона. Хеш-таблица порядка не знает, поэтому
@@ -13,7 +13,7 @@ class SortedPairs {
 public:
     // Копирует пары из хранилища и сортирует их. Возвращает наибольшую
     // глубину рекурсии сортировки.
-    int build(const Store& store);
+    int build(const Engine& store);
 
     int count() const { return static_cast<int>(pairs_.size()); }
 

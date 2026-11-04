@@ -14,7 +14,7 @@
 #include <iostream>
 #include <string>
 
-#include "../include/kvstore.hpp"
+#include "kvstore.hpp"
 
 namespace {
 

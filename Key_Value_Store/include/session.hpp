@@ -1,19 +1,25 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
-#include "store.hpp"
+#include "engine.hpp"
 
-// Два независимых хранилища в одной программе, каждое со своим журналом.
+// Два независимых хранилища в одной программе, каждое со своим движком.
 // Команды работают с текущим.
 //
-// Практика 10: хранилища открываются конструктором сессии и закрываются
-// её деструктором. Закрыть или переоткрыть одно хранилище — значит
-// переместить на его место новый объект: пустой или открытый.
+// Практика 12: сессия хранит не хранилища, а указатели на абстрактный
+// движок — std::unique_ptr<Engine>. Какой движок под каждым, решает
+// make_engine по имени базы: «:memory:» — в памяти, иначе — журнал.
+// Сессия и консоль этого не знают и не проверяют. Закрытое хранилище —
+// пустой указатель.
 //
-// Инвариант: 0 <= current_ < STORES; paths_[i] — путь, с которым хранилище
+// Практика 10: хранилища открываются конструктором сессии и закрываются
+// её деструктором.
+//
+// Инвариант: 0 <= current_ < STORES; paths_[i] — имя, с которым хранилище
 // номер i было открыто последний раз удачно. Неудачный open_current не
-// меняет ни хранилище, ни путь.
+// меняет ни хранилище, ни имя.
 class Session {
 public:
     static constexpr int STORES = 2;
@@ -22,17 +28,25 @@ public:
     // из конструктора, а уже открытое первое закроет деструктор поля.
     Session(const std::string& first, const std::string& second);
 
-    // Текущее и другое хранилище, номер текущего от 1.
-    Store& current() { return stores_[current_]; }
-    Store& other() { return stores_[1 - current_]; }
+    // Открыто ли хранилище: текущее, другое, номер index от 0.
+    bool current_open() const { return stores_[current_] != nullptr; }
+    bool other_open() const { return stores_[1 - current_] != nullptr; }
+    bool is_open(int index) const { return stores_[index] != nullptr; }
+
+    // Текущее, другое и хранилище номер index. Только для открытых:
+    // проверять это — дело вызывающего.
+    Engine& current() { return *stores_[current_]; }
+    Engine& other() { return *stores_[1 - current_]; }
+    const Engine& store(int index) const { return *stores_[index]; }
     int number() const { return current_ + 1; }
 
-    // Закрывает текущее хранилище: на его место перемещается пустое.
+    // Закрывает текущее хранилище: указатель обнуляется, и unique_ptr
+    // удаляет движок через виртуальный деструктор.
     void close_current();
 
-    // Открывает на месте текущего журнал path. Если открыть не удалось —
+    // Открывает на месте текущего базу location. Если открыть не удалось —
     // KvError, и текущее хранилище остаётся каким было.
-    void open_current(const std::string& path);
+    void open_current(const std::string& location);
 
     // Переключает текущее хранилище. false, если номер не от 1 до STORES.
     bool select(int number);
@@ -40,7 +54,7 @@ public:
     const std::string& path(int index) const { return paths_[index]; }
 
 private:
-    Store stores_[STORES];        // сначала пустые, конструктор открывает оба
-    std::string paths_[STORES];   // пути помнятся и после закрытия хранилища
+    std::unique_ptr<Engine> stores_[STORES];   // пустой указатель — хранилище закрыто
+    std::string paths_[STORES];                // имена помнятся и после закрытия
     int current_ = 0;
 };

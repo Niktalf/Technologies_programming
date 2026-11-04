@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(
         ${PROJECT_NAME}_core
+        src/creature.cpp
         src/exit_search.cpp
         src/game.cpp
         src/hero.cpp

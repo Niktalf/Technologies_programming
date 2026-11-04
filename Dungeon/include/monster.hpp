@@ -1,48 +1,90 @@
 #pragma once
 
-// Монстр: координаты и здоровье.
+#include <memory>
+
+#include "creature.hpp"
+
+// Монстр — существо, которое ходит само и бьёт героя. Тоже абстрактный
+// класс: act остаётся чисто виртуальным, и «просто монстра» не бывает.
+// Здесь — то, что общее у всех монстров: сила удара, счётчик созданных
+// и два шага поведения, из которых наследники собирают свой ход.
 //
-// Инвариант: 0 <= hp() <= START_HP. Здоровье меняется только методом
-// take_damage, а он не опускает его ниже нуля и не даёт отрицательным
-// уроном поднять выше начального.
+// Инвариант: здоровье — по инварианту Creature; attack() > 0.
 //
-// Координаты монстр о себе только хранит: стоит ли он на проходимой клетке
-// и нет ли в той же клетке другого монстра, следят карта и список монстров.
-// Один монстр этого знать не может — он не видит ни карты, ни соседей.
-class Monster {
+// Что монстр стоит не в стене и не в чужой клетке — инвариант не монстра,
+// а игры. Монстр сохраняет его сам: шагает только туда, где игра
+// подтвердила, что клетка свободна (Game::free_cell).
+class Monster : public Creature {
 public:
-    static constexpr int START_HP = 8;
+    int attack() const { return attack_; }
 
-    // Монстр с полным здоровьем в клетке (x, y). На практике 9 вместо
-    // конструктора был статический метод Monster::at.
-    Monster(int x, int y);
-
-    int x() const { return x_; }
-    int y() const { return y_; }
-    int hp() const { return hp_; }
-    bool alive() const { return hp_ > 0; }
-
-    // Удар: здоровье уменьшается и не уходит ниже нуля. Отрицательный урон
-    // ничего не делает — иначе через удар можно было бы лечить.
-    void take_damage(int amount);
-
-    // Сколько монстров создано конструктором с начала работы программы.
-    //
-    // Почему счётчик статический. Обычное поле есть у каждого объекта своё:
-    // у восьми монстров было бы восемь счётчиков, и каждый знал бы только
-    // о себе. Статическое поле одно на весь класс — оно принадлежит классу
-    // Monster, а не отдельному монстру, и существует, даже когда ни одного
-    // монстра нет. Поэтому и метод, который его читает, статический: его
-    // вызывают через имя класса, Monster::created_count(), без объекта.
-    //
-    // Копии, которые делает вектор при перекладывании, сюда не попадают:
-    // это не новые монстры, а те же самые на новом месте в памяти.
+    // Сколько монстров создано с начала работы программы (практика 11).
+    // Счётчик растёт в конструкторе Monster, а его вызывает конструктор
+    // каждого наследника — поэтому считаются монстры всех видов.
     static int created_count() { return created_count_; }
 
+protected:
+    Monster(int x, int y, int hp_max, int attack);
+
+    // Стоит ли монстр вплотную к герою: по горизонтали или вертикали.
+    bool next_to_hero(const Game& game) const;
+
+    // Шаг на (dx, dy), если клетка свободна. Возвращает, сделан ли шаг.
+    bool step(const Game& game, int dx, int dy);
+
 private:
-    int x_;
-    int y_;
-    int hp_ = START_HP;
+    int attack_;
 
     static int created_count_;
 };
+
+// Гоблин: увидел героя — идёт к нему, подошёл вплотную — бьёт.
+class Goblin : public Monster {
+public:
+    static constexpr int HP = 8;
+    static constexpr int ATTACK = 3;
+    static constexpr int SIGHT = 8;   // дальше этого героя не видит
+
+    Goblin(int x, int y);
+
+    void act(Game& game) override;
+    char symbol() const override { return 'g'; }
+    const char* name() const override { return "goblin"; }
+};
+
+// Летучая мышь: порхает куда придётся. Налетела на героя — кусает.
+class Bat : public Monster {
+public:
+    static constexpr int HP = 4;
+    static constexpr int ATTACK = 1;
+
+    Bat(int x, int y);
+
+    void act(Game& game) override;
+    char symbol() const override { return 'b'; }
+    const char* name() const override { return "bat"; }
+};
+
+// Скелет: стоит на месте, как страж. Бьёт, только если герой рядом.
+class Skeleton : public Monster {
+public:
+    static constexpr int HP = 12;
+    static constexpr int ATTACK = 4;
+
+    Skeleton(int x, int y);
+
+    void act(Game& game) override;
+    char symbol() const override { return 's'; }
+    const char* name() const override { return "skeleton"; }
+};
+
+// Монстр по символу из файла уровня: g, b, s; M — гоблин, как в файлах
+// практики 8. Для другого символа — пустой указатель.
+//
+// Это единственное место в программе, где перечислены конкретные виды
+// монстров. Новый вид — новый класс и одна строка здесь; игровой цикл,
+// список монстров и отрисовка не меняются.
+std::unique_ptr<Monster> make_monster(char symbol, int x, int y);
+
+// Случайный символ вида монстра — для spawn и случайного уровня.
+char random_monster_symbol();

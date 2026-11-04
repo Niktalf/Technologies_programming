@@ -87,8 +87,6 @@ public:
     void fill_checker(int cell);
     void fill_stripes(int count);
 
-    void invert();
-    void brighten(int delta);
 
     // Самая тёмная и самая светлая точка. false у пустого изображения.
     bool min_max(int& darkest, int& brightest) const;

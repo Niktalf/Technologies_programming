@@ -14,18 +14,17 @@ add_library(
         src/log_generator.cpp
         src/log_parser.cpp
         src/log_record.cpp
-        src/log_stats.cpp
+        src/log_report.cpp
+        src/log_source.cpp
         src/log_view.cpp
         src/shell.cpp
         src/status.cpp
         src/timestamp.cpp
 )
-
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 
 add_executable(
         ${PROJECT_NAME}
         src/main.cpp
 )
-
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)

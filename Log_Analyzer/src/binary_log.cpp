@@ -72,44 +72,45 @@ LogStatus BinaryLog::write(const LogBook& book, const std::string& path) {
 }
 
 // Длинам из файла не доверяем: каждая проверяется до чтения по ней.
-LogStatus BinaryLog::read_record(std::istream& file, std::vector<LogRecord>& records) {
+std::unique_ptr<LogRecord> BinaryLog::read_record(std::istream& file) {
     unsigned long long time = 0;
     unsigned long long level = 0;
     unsigned long long module_length = 0;
     if (!read_number(file, time, 8) || !read_number(file, level, 1)
         || !read_number(file, module_length, 1)) {
-        return LogStatus::corrupt;
+        return nullptr;
     }
     if (level >= LEVEL_COUNT || module_length == 0 || module_length > BINARY_MODULE_LIMIT) {
-        return LogStatus::corrupt;
+        return nullptr;
     }
     std::string module;
     unsigned long long text_length = 0;
     if (!read_text(file, module, module_length) || !read_number(file, text_length, 4)
         || text_length > BINARY_TEXT_LIMIT) {
-        return LogStatus::corrupt;
+        return nullptr;
     }
     std::string text;
     if (!read_text(file, text, text_length)) {
-        return LogStatus::corrupt;
+        return nullptr;
     }
     // Время вне разумных пределов, неизвестный уровень, пустой модуль —
     // конструктор записи откажет, и это значит, что файл испорчен.
     Timestamp moment = Timestamp::from_value(static_cast<long long>(time));
     try {
-        records.emplace_back(moment, static_cast<Level>(level), std::move(module),
-                             std::move(text));
+        return std::make_unique<LogRecord>(moment, static_cast<Level>(level), std::move(module),
+                                           std::move(text));
     } catch (const std::invalid_argument&) {
-        return LogStatus::corrupt;
+        return nullptr;
     }
-    return LogStatus::ok;
 }
 
-LogBook BinaryLog::read(const std::string& path) {
+bool BinaryLog::is_binary(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw LogError(LogStatus::cannot_open, path);
-    }
+    char signature[4];
+    return file.read(signature, 4) && std::memcmp(signature, BINARY_SIGNATURE, 4) == 0;
+}
+
+unsigned long long BinaryLog::read_header(std::istream& file, const std::string& path) {
     char signature[4];
     if (!file.read(signature, 4) || std::memcmp(signature, BINARY_SIGNATURE, 4) != 0) {
         throw LogError(LogStatus::bad_format, path);   // чужой файл отвергается сразу
@@ -126,14 +127,25 @@ LogBook BinaryLog::read(const std::string& path) {
     if (!read_number(file, count, 8) || count > BINARY_COUNT_LIMIT) {
         throw LogError(LogStatus::corrupt, path);
     }
+    return count;
+}
+
+LogBook BinaryLog::read(const std::string& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw LogError(LogStatus::cannot_open, path);
+    }
+    unsigned long long count = read_header(file, path);
     // Записи читаются в новый вектор. Если файл оборван, исключение вылетит
     // из середины цикла: новый журнал и поток разрушатся сами, а журнал
     // вызывающего не изменится — до присваивания дело не дойдёт.
     std::vector<LogRecord> records;
     for (unsigned long long i = 0; i < count; ++i) {
-        if (read_record(file, records) != LogStatus::ok) {
+        std::unique_ptr<LogRecord> record = read_record(file);
+        if (!record) {
             throw LogError(LogStatus::corrupt, path);
         }
+        records.push_back(std::move(*record));
     }
     // В двоичном файле нет испорченных строк: каждая запись — строка.
     // Возврат по значению: векторы не копируются.

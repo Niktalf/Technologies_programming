@@ -2,7 +2,7 @@
 
 #include <iostream>
 
-int SortedPairs::build(const Store& store) {
+int SortedPairs::build(const Engine& store) {
     pairs_ = store.pairs();
     buffer_.resize(pairs_.size());
     int depth = 0;

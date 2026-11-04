@@ -3,7 +3,7 @@
 #include <iomanip>
 #include <iostream>
 
-#include "store.hpp"
+#include "engine.hpp"
 
 Record Record::put(const std::string& key, const std::string& value) {
     Record record;
@@ -24,12 +24,16 @@ bool Record::valid() const {
     return !key_.empty() && key_.size() <= KEY_MAX && value_.size() <= VALUE_MAX;
 }
 
-// Явный this. Вызов record.apply_to(store, existed) компилятор превращает
-// в вызов функции, которой скрытым первым параметром передан адрес record —
-// это и есть this. Записи нужно передать хранилищу саму себя, и *this —
-// единственный способ назвать «этот объект» изнутри метода.
-KvStatus Record::apply_to(Store& store, bool& existed) const {
-    return store.apply(*this, existed);
+// Практика 12: запись применяет себя к любому движку через его открытые
+// методы. На практике 9–11 она вызывала Store::apply и передавала *this;
+// теперь движков два, и запись не знает, какой перед ней.
+KvStatus Record::apply_to(Engine& engine, bool& existed) const {
+    if (operation_ == Operation::put) {
+        return engine.put(key_, value_, existed);
+    }
+    std::string old;
+    existed = engine.get(key_, old) == KvStatus::ok;
+    return engine.remove(key_);
 }
 
 std::uint8_t Record::checksum(const std::uint8_t* bytes, std::size_t size) {

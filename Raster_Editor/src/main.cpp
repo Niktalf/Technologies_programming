@@ -3,8 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "../../../../../Technologies_programming/Raster_Editor/include/editor.hpp"
+#include "editor.hpp"
 
+// Практика 12: фильтры — иерархия классов с абстрактным Filter во главе;
+// команда filters применяет цепочку фильтров одним циклом.
+//
 // Практика 11: поля всех классов закрыты, инварианты записаны, работа
 // с файлами PPM вынесена из изображения в класс PpmFile.
 //

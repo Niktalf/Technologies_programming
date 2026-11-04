@@ -11,8 +11,9 @@
 #include "binary_log.hpp"
 #include "file_reader.hpp"
 #include "log_parser.hpp"
+#include "log_report.hpp"
+#include "log_source.hpp"
 #include "log_generator.hpp"
-#include "log_stats.hpp"
 
 namespace {
 
@@ -55,7 +56,11 @@ void Shell::print_help() {
               << "  tail                       - last ten records\n"
               << "  stats                      - records by level\n"
               << "  hours                      - distribution by hour\n"
-              << "  modules                    - records by module\n"
+              << "  modules                    - top modules by number of records\n"
+              << "  report <what> from <source> - reports on any source of records:\n"
+              << "      what:   levels, modules, hours or all, e.g. report levels hours\n"
+              << "      source: book | file <path> | files <path> <path> ... |\n"
+              << "              random <count> [seed]\n"
               << "  order time|level|module    - viewing order (records do not move)\n"
               << "  view [n]                   - show n records in the chosen order\n"
               << "  span                       - the earliest and the latest time\n"
@@ -484,6 +489,100 @@ void Shell::command_stress(const std::vector<std::string>& words) {
     std::cout << "Open files after all cycles: " << FileReader::open_count() << '\n';
 }
 
+// Отчёты stats, hours и modules по загруженному журналу. Источник —
+// загруженный журнал, отчёт — один. Тот же цикл run_reports, что у report.
+void Shell::command_stats(const std::string& name) const {
+    const char* report_name = name == "stats" ? "levels" : name.c_str();
+    std::vector<std::unique_ptr<LogReport>> reports;
+    reports.push_back(make_report(report_name));
+    BookSource source(book_);
+    run_reports(source, reports);
+    reports[0]->print();
+}
+
+// Источник по словам начиная с words[position]: book, file <путь>,
+// files <путь> ..., random <число> [зерно]. Неверно — сообщение и пустой
+// указатель. Файл не открылся — LogError.
+std::unique_ptr<LogSource> Shell::make_source(const std::vector<std::string>& words,
+                                              std::size_t position) const {
+    if (position >= words.size()) {
+        std::cout << "Which source? book, file, files or random\n";
+        return nullptr;
+    }
+    const std::string& kind = words[position];
+    std::size_t rest = words.size() - position - 1;   // слов после вида источника
+    if (kind == "book" && rest == 0) {
+        if (!require_log()) {
+            return nullptr;
+        }
+        return std::make_unique<BookSource>(book_);
+    }
+    if (kind == "file" && rest == 1) {
+        return open_file_source(words[position + 1]);
+    }
+    if (kind == "files" && rest >= 1) {
+        // Источник из нескольких файлов содержит источники. Каждый файл
+        // может быть и текстовым, и двоичным.
+        std::unique_ptr<MultiFileSource> multi = std::make_unique<MultiFileSource>();
+        for (std::size_t i = position + 1; i < words.size(); ++i) {
+            multi->add(open_file_source(words[i]));
+        }
+        return multi;
+    }
+    long count = 0;
+    long seed = 1;
+    if (kind == "random" && (rest == 1 || rest == 2) && parse_long(words[position + 1], count)
+        && count >= 0 && (rest == 1 || (parse_long(words[position + 2], seed) && seed >= 0))) {
+        return std::make_unique<RandomSource>(count, static_cast<unsigned int>(seed));
+    }
+    std::cout << "Unknown source. Use: book | file <path> | files <path> ... |"
+              << " random <count> [seed]\n";
+    return nullptr;
+}
+
+// report levels hours from files a.log b.bin
+// Любой набор отчётов по любому источнику. Сначала собираются отчёты
+// и источник, потом run_reports гонит записи — не зная, кто есть кто.
+void Shell::command_report(const std::vector<std::string>& words) {
+    std::size_t from = 1;
+    while (from < words.size() && words[from] != "from") {
+        ++from;
+    }
+    if (from == 1 || from == words.size()) {
+        std::cout << "Usage: report <levels|modules|hours|all ...> from <source>\n";
+        return;
+    }
+    std::vector<std::unique_ptr<LogReport>> reports;
+    for (std::size_t i = 1; i < from; ++i) {
+        if (words[i] == "all") {
+            reports.push_back(make_report("levels"));
+            reports.push_back(make_report("modules"));
+            reports.push_back(make_report("hours"));
+        } else {
+            std::unique_ptr<LogReport> report = make_report(words[i]);
+            if (!report) {
+                std::cout << "Unknown report: " << words[i] << ". Known: levels, modules, hours\n";
+                return;
+            }
+            reports.push_back(std::move(report));
+        }
+    }
+    try {
+        std::unique_ptr<LogSource> source = make_source(words, from + 1);
+        if (!source) {
+            return;
+        }
+        long count = run_reports(*source, reports);
+        for (const std::unique_ptr<LogReport>& report : reports) {
+            std::cout << "== " << report->title() << " ==\n";
+            report->print();
+        }
+        std::cout << "Records: " << count << ", source: " << source->describe() << '\n';
+    } catch (const LogError& error) {
+        std::cout << "Error: " << error.what() << '\n';
+    }
+}
+
 bool Shell::execute(const std::vector<std::string>& words) {
     const std::string& name = words[0];
     if (name == "load") {
@@ -510,17 +609,10 @@ bool Shell::execute(const std::vector<std::string>& words) {
         }
     } else if (name == "stats" || name == "hours" || name == "modules") {
         if (require_log()) {
-            // Статистика нужна только на время команды: локальный объект.
-            LogStats stats;
-            stats.collect(book_);
-            if (name == "stats") {
-                stats.print_levels();
-            } else if (name == "hours") {
-                stats.print_hours();
-            } else {
-                stats.print_modules();
-            }
+            command_stats(name);
         }
+    } else if (name == "report") {
+        command_report(words);
     } else if (name == "order") {
         command_order(words);
     } else if (name == "view") {

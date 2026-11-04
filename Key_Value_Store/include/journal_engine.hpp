@@ -5,14 +5,16 @@
 #include <utility>
 #include <vector>
 
+#include "engine.hpp"
 #include "journal_file.hpp"
 #include "kvstore.hpp"
 #include "record.hpp"
 
-// Хранилище ключ-значение с журналом на диске. Внутренний класс
-// библиотеки: клиенты видят его только через KvStore из include/kvstore.hpp.
-// Консоль — инструмент самой библиотеки, ей нужны подробности журнала
-// (команды stats и record), поэтому она работает с этим классом напрямую.
+// Журнальный движок: хеш-таблица в памяти и журнал на диске.
+//
+// Практика 12: это наследник Engine. До практики 11 класс назывался Store
+// и был единственным устройством хранилища; теперь он — один из двух
+// движков, и всё, кроме опытов demo и stress, работает с ним через Engine.
 //
 // Инвариант — то, что связывает таблицу в памяти и журнал на диске:
 //   * data_ — ровно то, что получится, если применить по порядку все
@@ -23,7 +25,8 @@
 //   * broken_ — сколько записей отброшено при открытии, 0 или 1.
 // Держится он порядком действий в apply: сначала запись в журнал, потом
 // таблица. Если запись в журнал не удалась, исключение вылетит раньше,
-// чем таблица изменится. У закрытого хранилища всё по нулям.
+// чем таблица изменится. У объекта, из которого журнал забрали
+// перемещением, всё по нулям.
 //
 // Практика 11: хранилище больше не работает с файлом. Чтение журнала,
 // обрезка хвоста, байты записей — внутри JournalFile; здесь — таблица
@@ -39,49 +42,43 @@
 // особых методов объявлены явно: копирование запрещено, перемещение —
 // созданное компилятором по умолчанию: оно перемещает поле за полем,
 // а JournalFile умеет перемещаться сам.
-class Store {
+class JournalEngine : public Engine {
 public:
-    // Закрытое хранилище: журнала нет, таблица пуста.
-    Store() = default;
-
     // Открывает журнал path. Файла может не быть — тогда создаётся пустая
     // база. Повреждённый хвост журнала отрезается. Если журнал не открылся —
     // KvError, и объекта нет.
-    explicit Store(const std::string& path);
+    explicit JournalEngine(const std::string& path);
 
-    ~Store();
+    ~JournalEngine() override;
 
-    Store(const Store&) = delete;
-    Store& operator=(const Store&) = delete;
-    Store(Store&&) = default;
-    Store& operator=(Store&&) = default;
+    JournalEngine(const JournalEngine&) = delete;
+    JournalEngine& operator=(const JournalEngine&) = delete;
+    JournalEngine(JournalEngine&&) = default;
+    JournalEngine& operator=(JournalEngine&&) = default;
 
     bool is_open() const { return journal_.is_open(); }
     const std::string& path() const { return journal_.path(); }
 
-    // Операции. Каждая сначала пишет в журнал, потом меняет память.
-    // existed — был ли ключ до операции.
-    KvStatus put(const std::string& key, const std::string& value, bool& existed);
-    KvStatus get(const std::string& key, std::string& value) const;
-    KvStatus remove(const std::string& key);
-    KvStatus apply(const Record& record, bool& existed);
+    // Операции Engine. Каждая сначала пишет в журнал, потом меняет память.
+    KvStatus put(const std::string& key, const std::string& value, bool& existed) override;
+    KvStatus get(const std::string& key, std::string& value) const override;
+    KvStatus remove(const std::string& key) override;
+    std::vector<std::pair<std::string, std::string>> pairs() const override;
+    std::size_t size() const override { return data_.size(); }
+    bool repaired() const override { return broken_ > 0; }
 
-    std::size_t size() const { return data_.size(); }
+    // Записи журнала, ненужные среди них, отброшенные при открытии.
+    std::string describe() const override;
 
-    // Сколько записей в журнале и сколько из них уже не нужны.
+    // Только у журнального движка: для опытов и для проверки инварианта.
     long journal_records() const { return records_; }
     long journal_garbage() const { return garbage_; }
-
-    // Сколько записей отброшено при открытии как повреждённые.
-    long recovered_broken() const { return broken_; }
-
-    // Все пары в порядке таблицы, то есть в произвольном.
-    std::vector<std::pair<std::string, std::string>> pairs() const;
 
     // На практике 10 это было открытое статическое поле; теперь флаг закрыт.
     static void set_trace(bool on) { trace_ = on; }
 
 private:
+    KvStatus apply(const Record& record, bool& existed);
     void apply_in_memory(const Record& record);
 
     // Поля создаются в порядке объявления и разрушаются в обратном:

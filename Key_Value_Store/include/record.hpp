@@ -7,7 +7,7 @@
 
 #include "kvstore.hpp"
 
-class Store;
+class Engine;
 
 // Запись журнала: тип операции, ключ и значение (практика 2).
 //
@@ -55,8 +55,9 @@ public:
     // Ключ от 1 до 255 байт, значение до 4096 байт.
     bool valid() const;
 
-    // Применяет операцию к хранилищу: то же, что Store::apply.
-    KvStatus apply_to(Store& store, bool& existed) const;
+    // Применяет операцию к любому движку: put или remove через его
+    // интерфейс. existed — был ли ключ до операции.
+    KvStatus apply_to(Engine& engine, bool& existed) const;
 
     // Запись в байтах: заголовок с контрольной суммой, ключ, значение.
     std::vector<std::uint8_t> encode() const;

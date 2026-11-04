@@ -1,16 +1,16 @@
-#include "store.hpp"
+#include "journal_engine.hpp"
 
 #include <iostream>
 
-bool Store::trace_ = false;
+bool JournalEngine::trace_ = false;
 
 // Список инициализации: journal_ создаётся до входа в тело конструктора.
-// Если его конструктор возбудит исключение, тело Store не выполнится,
-// и объекта Store не будет вовсе.
-Store::Store(const std::string& path)
+// Если его конструктор возбудит исключение, тело JournalEngine
+// не выполнится, и объекта не будет вовсе.
+JournalEngine::JournalEngine(const std::string& path)
     : journal_(path) {
     // Журнал отдаёт все целые записи по порядку и сам отрезает повреждённый
-    // хвост. Если он возбудит исключение, объекта Store не будет, но уже
+    // хвост. Если он возбудит исключение, объекта JournalEngine не будет, но уже
     // созданное поле journal_ разрушится своим деструктором — файл всё
     // равно закроется.
     std::vector<Record> records;
@@ -22,21 +22,21 @@ Store::Store(const std::string& path)
         ++records_;
     }
     if (trace_) {
-        std::cout << "  [Store] opened " << path << ", keys " << data_.size() << '\n';
+        std::cout << "  [JournalEngine] opened " << path << ", keys " << data_.size() << '\n';
     }
 }
 
-Store::~Store() {
+JournalEngine::~JournalEngine() {
     // Закрывать журнал здесь не нужно: после тела этого деструктора
     // автоматически вызовется деструктор поля journal_.
     if (trace_ && journal_.is_open()) {
-        std::cout << "  [Store] closing " << journal_.path() << '\n';
+        std::cout << "  [JournalEngine] closing " << journal_.path() << '\n';
     }
 }
 
 // Применяет запись к таблице. Побеждает последняя запись о ключе,
 // прежние становятся мусором.
-void Store::apply_in_memory(const Record& record) {
+void JournalEngine::apply_in_memory(const Record& record) {
     if (record.operation() == Record::Operation::remove) {
         if (data_.erase(record.key()) > 0) {
             ++garbage_;   // удалённая пара стала мусором
@@ -49,7 +49,7 @@ void Store::apply_in_memory(const Record& record) {
     }
 }
 
-KvStatus Store::apply(const Record& record, bool& existed) {
+KvStatus JournalEngine::apply(const Record& record, bool& existed) {
     existed = data_.count(record.key()) > 0;
     if (!journal_.is_open() || !record.valid()) {
         return KvStatus::bad_argument;
@@ -66,16 +66,16 @@ KvStatus Store::apply(const Record& record, bool& existed) {
     return KvStatus::ok;
 }
 
-KvStatus Store::put(const std::string& key, const std::string& value, bool& existed) {
+KvStatus JournalEngine::put(const std::string& key, const std::string& value, bool& existed) {
     return apply(Record::put(key, value), existed);
 }
 
-KvStatus Store::remove(const std::string& key) {
+KvStatus JournalEngine::remove(const std::string& key) {
     bool existed = false;
     return apply(Record::remove(key), existed);
 }
 
-KvStatus Store::get(const std::string& key, std::string& value) const {
+KvStatus JournalEngine::get(const std::string& key, std::string& value) const {
     auto found = data_.find(key);
     if (found == data_.end()) {
         return KvStatus::not_found;
@@ -84,11 +84,17 @@ KvStatus Store::get(const std::string& key, std::string& value) const {
     return KvStatus::ok;
 }
 
-std::vector<std::pair<std::string, std::string>> Store::pairs() const {
+std::vector<std::pair<std::string, std::string>> JournalEngine::pairs() const {
     std::vector<std::pair<std::string, std::string>> result;
     result.reserve(data_.size());
     for (const auto& pair : data_) {
         result.push_back(pair);
     }
     return result;
+}
+
+std::string JournalEngine::describe() const {
+    return "Journal records: " + std::to_string(records_) + ", obsolete among them: "
+           + std::to_string(garbage_) + "\nDiscarded as damaged on open: "
+           + std::to_string(broken_) + "\n";
 }

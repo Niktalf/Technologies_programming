@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "level.hpp"
 #include "log_book.hpp"
+#include "log_source.hpp"
 #include "log_view.hpp"
 
 // Командная оболочка: журнал, фильтр по уровням, порядок просмотра
@@ -50,6 +53,10 @@ private:
     void command_demo();
     static void try_to_break();
     void command_stress(const std::vector<std::string>& words);
+    void command_stats(const std::string& name) const;
+    void command_report(const std::vector<std::string>& words);
+    std::unique_ptr<LogSource> make_source(const std::vector<std::string>& words,
+                                           std::size_t position) const;
     static void print_help();
 
     LogBook book_;
