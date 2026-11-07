@@ -75,29 +75,29 @@ int main(int argc, char* argv[]) {
         print_usage(argv[0]);
         return 1;
     }
-    Store book;
-    KvStatus status = book.open(argv[1]);
-    if (status != KvStatus::ok) {
-        std::cerr << "Cannot open the phone book: " << Store::status_text(status) << '\n';
-        return 1;
-    }
-    if (book.recovered_broken() > 0) {
-        std::cout << "Warning: the end of the file was damaged and discarded.\n";
-    }
-    const std::string action = argv[2];
-    int code = 0;
-    if (action == "add" && argc >= 5) {
-        code = add(book, argv[3], argv[4]);
-    } else if (action == "find" && argc >= 4) {
-        code = find(book, argv[3]);
-    } else if (action == "remove" && argc >= 4) {
-        code = remove_entry(book, argv[3]);
-    } else if (action == "list") {
-        code = list(book);
-    } else {
+    try {
+        Store book(argv[1]);
+        if (book.recovered_broken() > 0) {
+            std::cout << "Warning: the end of the file was damaged and discarded.\n";
+        }
+        const std::string action = argv[2];
+        if (action == "add" && argc >= 5) {
+            return add(book, argv[3], argv[4]);
+        }
+        if (action == "find" && argc >= 4) {
+            return find(book, argv[3]);
+        }
+        if (action == "remove" && argc >= 4) {
+            return remove_entry(book, argv[3]);
+        }
+        if (action == "list") {
+            return list(book);
+        }
         print_usage(argv[0]);
-        code = 1;
-    }
-    book.close();   // без этого журнал остался бы открытым до конца процесса
-    return code;
+        return 1;
+    } catch (const KvError& error) {
+        // Сбой записи тоже приходит сюда: журнал закроет деструктор book.
+        std::cerr << "Cannot open the phone book: " << error.what() << '\n';
+        return 1;
+    }   // при любом return журнал закрывает деструктор book
 }

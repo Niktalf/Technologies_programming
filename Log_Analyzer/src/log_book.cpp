@@ -4,6 +4,9 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <stdexcept>
+
+#include "file_reader.hpp"
 
 namespace {
 
@@ -79,25 +82,15 @@ bool same_word_ignore_case(const std::string& a, const std::string& b) {
 
 } // namespace
 
-LogStatus LogBook::load(const std::string& path) {
-    std::ifstream file(path);
-    if (!file) {
-        return LogStatus::cannot_open;
-    }
-    records_.clear();
-    path_ = path;
-    lines_ = 0;
-    broken_ = 0;
-    sorted_ = false;
-
-    // getline читает строку любой длины: буфер растёт сам, обрезанных
-    // длинных строк, как в версии на C, больше нет.
+// Объект reader живёт до конца конструктора. Как бы конструктор
+// ни завершился — дочитав файл или исключением, — деструктор reader
+// закроет файл.
+LogBook::LogBook(const std::string& path)
+    : path_(path), loaded_(true) {
+    FileReader reader(path);
     std::string line;
-    while (std::getline(file, line)) {
+    while (reader.read_line(line)) {
         ++lines_;
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();   // файл из Windows
-        }
         // Пустая строка — не испорченная запись, её просто пропускаем.
         if (!line.empty()) {
             LogRecord record;
@@ -108,16 +101,21 @@ LogStatus LogBook::load(const std::string& path) {
             }
         }
     }
-    // Ошибка чтения посреди файла отличается от конца файла только
-    // состоянием потока.
-    if (file.bad()) {
-        loaded_ = false;
-        return LogStatus::corrupt;
+}   // здесь деструктор reader закрывает файл; журнал живёт дальше
+
+void LogBook::read_until_failure(const std::string& path, long fail_at) {
+    FileReader reader(path);
+    std::string line;
+    long number = 0;
+    while (reader.read_line(line)) {
+        ++number;
+        if (number == fail_at) {
+            std::cout << "  throwing an exception at line " << number << '\n';
+            // Выход из функции посреди чтения. В версии на C здесь нужно
+            // было бы не забыть fclose; здесь его нет — и он не нужен.
+            throw std::runtime_error("error at line " + std::to_string(number));
+        }
     }
-    loaded_ = true;
-    // Файл закрывается здесь сам: деструктор std::ifstream вызывается
-    // при выходе из метода. Подробно об этом — на практике 10.
-    return LogStatus::ok;
 }
 
 LogStatus LogBook::save_binary(const std::string& path) const {
@@ -173,49 +171,42 @@ LogStatus LogBook::read_binary_record(std::istream& file, LogRecord& record) {
     return LogStatus::ok;
 }
 
-LogStatus LogBook::load_binary(const std::string& path) {
+LogBook LogBook::from_binary(const std::string& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        return LogStatus::cannot_open;
+        throw LogError(LogStatus::cannot_open, path);
     }
     char signature[4];
     if (!file.read(signature, 4) || std::memcmp(signature, BINARY_SIGNATURE, 4) != 0) {
-        return LogStatus::bad_format;   // чужой файл отвергается сразу
+        throw LogError(LogStatus::bad_format, path);   // чужой файл отвергается сразу
     }
     unsigned long long version = 0;
     unsigned long long count = 0;
     if (!read_number(file, version, 2)) {
-        return LogStatus::corrupt;
+        throw LogError(LogStatus::corrupt, path);
     }
     if (version != BINARY_VERSION) {
-        return LogStatus::bad_format;
+        throw LogError(LogStatus::bad_format, path);
     }
     // Число записей проверяется до того, как под него что-то выделяется.
     if (!read_number(file, count, 8) || count > BINARY_COUNT_LIMIT) {
-        return LogStatus::corrupt;
+        throw LogError(LogStatus::corrupt, path);
     }
-    // Читаем во временный вектор: при любой ошибке прежний журнал остаётся.
-    std::vector<LogRecord> loaded;
-    LogStatus status = LogStatus::ok;
-    for (unsigned long long i = 0; i < count && status == LogStatus::ok; ++i) {
+    // Записи читаются в новый журнал. Если файл оборван, исключение вылетит
+    // из середины цикла: новый журнал и поток разрушатся сами, а журнал
+    // вызывающего не изменится — до присваивания дело не дойдёт.
+    LogBook book;
+    for (unsigned long long i = 0; i < count; ++i) {
         LogRecord record;
-        status = read_binary_record(file, record);
-        if (status == LogStatus::ok) {
-            loaded.push_back(record);
+        if (read_binary_record(file, record) != LogStatus::ok) {
+            throw LogError(LogStatus::corrupt, path);
         }
+        book.records_.push_back(record);
     }
-    if (status != LogStatus::ok) {
-        return status;
-    }
-    // swap обменивает содержимое двух векторов, не копируя записи:
-    // меняются местами только указатели на их блоки памяти.
-    records_.swap(loaded);
-    path_ = path;
-    lines_ = static_cast<long>(count);
-    broken_ = 0;
-    loaded_ = true;
-    sorted_ = false;
-    return LogStatus::ok;
+    book.path_ = path;
+    book.lines_ = static_cast<long>(count);
+    book.loaded_ = true;
+    return book;   // возврат по значению: векторы не копируются
 }
 
 void LogBook::print_load_report() const {

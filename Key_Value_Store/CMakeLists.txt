@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(
         ${PROJECT_NAME}_core
         src/console.cpp
+        src/journal_file.cpp
         src/parser.cpp
         src/record.cpp
         src/session.cpp

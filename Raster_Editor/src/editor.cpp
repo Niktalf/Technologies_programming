@@ -4,6 +4,8 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -54,6 +56,23 @@ void print_hex(Color color) {
     std::cout.fill(fill);
 }
 
+// Изображение передаётся по значению: внутри функции живёт копия.
+// Её создаёт копирующий конструктор при входе, уничтожает деструктор
+// при выходе. Оригинал не меняется.
+void show_by_value(Image copy) {
+    std::cout << "  inside the function, the copy:\n";
+    copy.set_pixel(0, 0, Color::from_rgb(255, 0, 0));
+    copy.print_short();
+}
+
+// Возвращает изображение по значению. Копии при возврате нет: компилятор
+// строит результат прямо там, куда его присваивают.
+Image make_gradient(int width, int height) {
+    Image result(width, height);
+    result.fill_gradient();
+    return result;
+}
+
 void print_fill_report(FillReport report) {
     std::cout << "Pixels filled: " << report.filled
               << ", largest stack of pending points: " << report.max_stack << '\n';
@@ -82,12 +101,14 @@ void Editor::print_help() {
               << "  load <file>              - read a PPM, either P3 or P6\n"
               << "  save <file> [text|bin]   - write, text P3 by default\n"
               << "  colors                   - check the color operations\n"
+              << "  demo                     - object lifetime: copies and moves\n"
+              << "  stress [n]               - create, copy, move and destroy n times\n"
               << "  help                     - this list\n"
               << "  quit                     - exit\n";
 }
 
 bool Editor::require_image() const {
-    if (!loaded_) {
+    if (image_.empty()) {
         std::cout << "No image. Create one with gen.\n";
         return false;
     }
@@ -98,26 +119,21 @@ bool Editor::ensure_image(int width, int height) {
     if (!image_.empty() && image_.width() == width && image_.height() == height) {
         return true;
     }
-    // reset сам проверяет размер и при ошибке изображение не трогает.
-    ImageStatus status = image_.reset(width, height);
-    if (status != ImageStatus::ok) {
+    // Новое изображение создаётся раньше, чем освобождается старое: если
+    // размер неверный, конструктор бросит исключение, и прежнее останется.
+    try {
+        image_ = Image(width, height);   // временный объект перемещается в image_
+    } catch (const std::invalid_argument& error) {
         std::cout << "Cannot create an image " << width << " x " << height << ": "
-                  << Image::status_text(status) << '\n';
+                  << error.what() << '\n';
         return false;
     }
     return true;
 }
 
-void Editor::take_result() {
-    // Присваивание копирует объект целиком — все три мегабайта массива,
-    // даже если картинка маленькая: массив — часть объекта. На практике 10
-    // пиксели переедут в кучу, и копировать придётся только нужное.
-    image_ = scratch_;
-}
-
 void Editor::print_info() const {
     std::cout << "File: " << (path_.empty() ? "not set" : path_) << '\n';
-    if (!loaded_) {
+    if (image_.empty()) {
         std::cout << "No image. Create one with gen.\n";
         return;
     }
@@ -138,7 +154,6 @@ void Editor::command_size(const std::vector<std::string>& words) {
     if (!ensure_image(size[0], size[1])) {
         return;
     }
-    loaded_ = true;
     std::cout << "Image created " << size[0] << " x " << size[1] << " ("
               << static_cast<long>(size[0]) * size[1] * static_cast<long>(sizeof(Color))
               << " bytes)\n";
@@ -173,7 +188,6 @@ void Editor::command_gen(const std::vector<std::string>& words) {
         std::cout << "Unknown kind: " << kind << '\n';
         return;
     }
-    loaded_ = true;
     std::cout << "Image created " << image_.width() << " x " << image_.height() << ".\n";
 }
 
@@ -217,11 +231,10 @@ void Editor::command_crop(const std::vector<std::string>& words) {
     if (!parse_ints(words, 1, v, 4)) {
         return;
     }
-    if (scratch_.crop_from(image_, v[0], v[1], v[2], v[3]) != ImageStatus::ok) {
+    if (image_.crop(v[0], v[1], v[2], v[3]) != ImageStatus::ok) {
         std::cout << "Crop failed: the rectangle must lie inside the image.\n";
         return;
     }
-    take_result();
     std::cout << "Cropped to " << image_.width() << " x " << image_.height() << '\n';
 }
 
@@ -238,11 +251,10 @@ void Editor::command_rotate(const std::vector<std::string>& words) {
         std::cout << "Not a number: " << words[1] << '\n';
         return;
     }
-    if (scratch_.rotate_from(image_, angle) != ImageStatus::ok) {
+    if (image_.rotate(angle) != ImageStatus::ok) {
         std::cout << "The angle must be a multiple of 90 degrees.\n";
         return;
     }
-    take_result();
     std::cout << "Rotated by " << angle << ". Size: " << image_.width() << " x "
               << image_.height() << '\n';
 }
@@ -256,12 +268,11 @@ void Editor::command_scale(const std::vector<std::string>& words) {
         std::cout << "Usage: scale <width> <height>\n";
         return;
     }
-    ImageStatus status = scratch_.scale_from(image_, size[0], size[1]);
+    ImageStatus status = image_.scale(size[0], size[1]);
     if (status != ImageStatus::ok) {
         std::cout << "Resize failed: " << Image::status_text(status) << '\n';
         return;
     }
-    take_result();
     std::cout << "New size: " << image_.width() << " x " << image_.height() << '\n';
 }
 
@@ -286,29 +297,34 @@ void Editor::command_fill(const std::vector<std::string>& words) {
     print_fill_report(image_.flood_fill(v[0], v[1], color));
 }
 
-// Заливка из угла (0, 0) на трёх картинках. Рисуются они во вспомогательном
-// изображении, чтобы не портить изображение пользователя. Шахматка: залита
-// одна клетка. Градиент: залит один столбец. Одноцветная картинка: залита
-// вся, и стек ни разу не вырос до числа её точек.
+// Заливка из угла (0, 0) на трёх картинках. Каждая — отдельный локальный
+// объект: изображение пользователя не трогается, а память картинки
+// освобождается сама в конце её блока. Шахматка: залита одна клетка.
+// Градиент: залит один столбец. Одноцветная картинка: залита вся.
 void Editor::command_filltest() {
     Color red = Color::from_rgb(255, 0, 0);
-    std::cout << "Checker, cell 32, 256 x 256:\n";
-    scratch_.reset(256, 256);
-    scratch_.fill_checker(32);
-    print_fill_report(scratch_.flood_fill(0, 0, red));
-
-    std::cout << "Gradient 256 x 256:\n";
-    scratch_.reset(256, 256);
-    scratch_.fill_gradient();
-    print_fill_report(scratch_.flood_fill(0, 0, red));
-
-    std::cout << "Plain black image 256 x 256:\n";
-    scratch_.reset(256, 256);
-    print_fill_report(scratch_.flood_fill(0, 0, red));
-
-    std::cout << "Plain black image 1024 x 1024:\n";
-    scratch_.reset(1024, 1024);
-    print_fill_report(scratch_.flood_fill(0, 0, red));
+    {
+        std::cout << "Checker, cell 32, 256 x 256:\n";
+        Image sample(256, 256);
+        sample.fill_checker(32);
+        print_fill_report(sample.flood_fill(0, 0, red));
+    }
+    {
+        std::cout << "Gradient 256 x 256:\n";
+        Image sample(256, 256);
+        sample.fill_gradient();
+        print_fill_report(sample.flood_fill(0, 0, red));
+    }
+    {
+        std::cout << "Plain black image 256 x 256:\n";
+        Image sample(256, 256);
+        print_fill_report(sample.flood_fill(0, 0, red));
+    }
+    {
+        std::cout << "Plain black image 2048 x 2048:\n";
+        Image sample(2048, 2048);
+        print_fill_report(sample.flood_fill(0, 0, red));
+    }
 }
 
 void Editor::command_minmax() const {
@@ -331,13 +347,13 @@ void Editor::command_load(const std::vector<std::string>& words) {
     }
     const std::string& path = words[1];
     PpmFormat format = PpmFormat::text;
-    ImageStatus status = scratch_.load(path, format);
+    // load читает во временное изображение и перемещает его в image_,
+    // только если файл прочитан целиком: оборванный файл не портит открытое.
+    ImageStatus status = image_.load(path, format);
     if (status != ImageStatus::ok) {
         std::cout << "Cannot read " << path << ": " << Image::status_text(status) << '\n';
         return;
     }
-    take_result();
-    loaded_ = true;
     path_ = path;
     std::cout << "Read: " << path << " (" << (format == PpmFormat::binary ? "binary P6" : "text P3")
               << "), size " << image_.width() << " x " << image_.height() << '\n';
@@ -431,6 +447,88 @@ void Editor::command_colors() {
               << '\n';
 }
 
+// Опыты со временем жизни. Image::trace включает сообщения из конструкторов,
+// деструктора, копий и перемещений; Image::live_count показывает, сколько
+// изображений владеют буфером.
+void Editor::command_demo() {
+    Image::trace = true;
+
+    // Все объекты опытов живут в этом блоке, чтобы сообщения их деструкторов
+    // появились до того, как trace выключится.
+    {
+
+        std::cout << "1. A stack object is destroyed when the block ends:\n";
+        {
+            Image image(4, 3);
+            std::cout << "  inside the block, images: " << Image::live_count() << '\n';
+        }   // здесь вызывается деструктор image
+        std::cout << "  after the block, images: " << Image::live_count() << "\n\n";
+
+        std::cout << "2. Pass by value - a copy is created and destroyed:\n";
+        Image original(64, 48);
+        original.fill_gradient();
+        show_by_value(original);
+        std::cout << "  after the function the original is unchanged:\n";
+        original.print_short();
+        std::cout << '\n';
+
+        std::cout << "3. The copy is independent of the original:\n";
+        Image copy = original;   // это копирующий конструктор, а не присваивание
+        copy.set_pixel(0, 0, Color::from_rgb(0, 255, 0));
+        copy.print_short();
+        original.print_short();
+        std::cout << '\n';
+
+        std::cout << "4. Copy assignment and self-assignment:\n";
+        Image other(2, 2);
+        other = original;
+        other.print_short();
+        Image& same = other;   // через ссылку: прямое other = other компилятор считает опечаткой
+        other = same;
+        std::cout << '\n';
+
+        std::cout << "5. Moves: the buffer changes owner, nothing is copied:\n";
+        Image made = make_gradient(32, 16);   // возврат по значению: ни копии, ни перемещения
+        Image moved = std::move(made);        // перемещающий конструктор
+        std::cout << "  the source after the move:\n";
+        made.print_short();
+        moved = Image(8, 8);                  // временный объект перемещается в moved
+        moved.print_short();
+        std::cout << '\n';
+
+        std::cout << "6. Invalid size - no object is created:\n";
+        try {
+            Image broken(0, 100);
+        } catch (const std::exception& error) {
+            std::cout << "  caught: " << error.what() << '\n';
+        }
+    }   // здесь деструкторы moved, made, other, copy, original — в обратном порядке
+    std::cout << "End of demo: the objects were destroyed in reverse order of creation.\n";
+    Image::trace = false;
+}
+
+// Создаёт, копирует, перемещает и уничтожает изображения times раз.
+// Если что-то не освобождается, потребление памяти растёт с каждым кругом.
+void Editor::command_stress(const std::vector<std::string>& words) {
+    int times = 100;
+    if (words.size() >= 2 && (!parse_int(words[1], times) || times <= 0)) {
+        std::cout << "stress needs a positive number, e.g. stress 100\n";
+        return;
+    }
+    Image::trace = false;
+    for (int i = 0; i < times; ++i) {
+        Image image(512, 512);
+        image.fill_gradient();
+        Image copy(image);                 // копирующий конструктор
+        Image other(16, 16);
+        other = copy;                      // копирующее присваивание
+        Image taken = std::move(other);    // перемещение
+        taken.set_pixel(0, 0, Color::from_rgb(1, 2, 3));
+        copy.rotate(90);                   // результат перемещается на место copy
+    }                                      // четыре деструктора на каждом круге
+    std::cout << "Cycles: " << times << ", images now: " << Image::live_count() << '\n';
+}
+
 bool Editor::execute(const std::vector<std::string>& words) {
     if (words.empty()) {
         return true;
@@ -464,6 +562,10 @@ bool Editor::execute(const std::vector<std::string>& words) {
         command_save(words);
     } else if (is_command(name, "colors")) {
         command_colors();
+    } else if (is_command(name, "demo")) {
+        command_demo();
+    } else if (is_command(name, "stress")) {
+        command_stress(words);
     } else if (is_command(name, "help")) {
         print_help();
     } else if (is_command(name, "quit") || is_command(name, "exit")) {

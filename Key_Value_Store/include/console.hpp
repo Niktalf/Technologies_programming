@@ -6,6 +6,8 @@
 #include "session.hpp"
 
 // Консольная программа: разбирает команды и вызывает методы хранилищ.
+// Практика 10: хранилища открываются вместе с консолью и закрываются,
+// когда консоль разрушается.
 // Два хранилища — поле консоли, поэтому методам не нужно передавать их
 // параметром, как функциям cli_execute(session, ...) в версии на C.
 class Console {
@@ -15,11 +17,9 @@ public:
     // не найден» — это ответ, а не ошибка.
     enum class Result { quit, ok, error };
 
-    // Открывает два хранилища. При ошибке ничего не остаётся открытым.
-    KvStatus open(const std::string& first, const std::string& second);
-
-    // Закрывает оба хранилища. Вызывается перед выходом из программы.
-    void close();
+    // Открывает два хранилища. Если журнал не открылся — KvError, и консоли
+    // нет. Закрывает хранилища деструктор поля session_.
+    Console(const std::string& first, const std::string& second);
 
     // Выполняет одну команду, заданную словами.
     Result execute(const std::vector<std::string>& words);
@@ -28,6 +28,7 @@ public:
     void run_interactive();
 
 private:
+    Result dispatch(const std::vector<std::string>& words);
     Result execute_on_store(const std::vector<std::string>& words);
     Result report(KvStatus status) const;
 
@@ -46,6 +47,8 @@ private:
     Result command_script(const std::vector<std::string>& words);
     static Result command_genscript(const std::vector<std::string>& words);
     static Result command_record(const std::vector<std::string>& words);
+    static Result command_demo();
+    static Result command_stress(const std::vector<std::string>& words);
     static void print_help();
 
     Session session_;

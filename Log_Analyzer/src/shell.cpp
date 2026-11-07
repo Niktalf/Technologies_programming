@@ -5,7 +5,10 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <utility>
 
+#include "file_reader.hpp"
 #include "log_generator.hpp"
 #include "log_stats.hpp"
 
@@ -64,12 +67,16 @@ void Shell::print_help() {
               << "  level all | none           - enable all levels or clear them all\n"
               << "  filter                     - show the current filter\n"
               << "  time                       - check the time packing\n"
+              << "  demo                       - object lifetime and an exception\n"
+              << "  stress [n]                 - load and destroy the log n times\n"
               << "  help                       - this list\n"
               << "  quit                       - exit\n";
 }
 
-LogStatus Shell::open(const std::string& path) {
-    return book_.load(path);
+void Shell::open(const std::string& path) {
+    // Временный журнал перемещается в book_: векторы записей переезжают,
+    // а не копируются.
+    book_ = LogBook(path);
 }
 
 bool Shell::require_log() const {
@@ -98,9 +105,13 @@ void Shell::command_load(const std::vector<std::string>& words) {
         return;
     }
     Clock::time_point start = Clock::now();
-    LogStatus status = book_.load(words[1]);
-    if (status != LogStatus::ok) {
-        std::cout << "Error: " << status_text(status) << " (" << words[1] << ")\n";
+    // Новый журнал строится отдельным объектом. Если файл не открылся,
+    // конструктор бросит исключение, и прежний журнал останется — в версии
+    // на C он к этому моменту был бы уже очищен.
+    try {
+        book_ = LogBook(words[1]);
+    } catch (const LogError& error) {
+        std::cout << "Error: " << error.what() << '\n';
         return;
     }
     std::cout << "Parsed in ";
@@ -135,9 +146,11 @@ void Shell::command_bload(const std::vector<std::string>& words) {
         return;
     }
     Clock::time_point start = Clock::now();
-    LogStatus status = book_.load_binary(words[1]);
-    if (status != LogStatus::ok) {
-        std::cout << "Cannot read " << words[1] << ": " << status_text(status) << '\n';
+    try {
+        // from_binary возвращает журнал по значению, и он перемещается в book_.
+        book_ = LogBook::from_binary(words[1]);
+    } catch (const LogError& error) {
+        std::cout << "Cannot read " << words[1] << ": " << status_text(error.status()) << '\n';
         return;
     }
     view_.reset();   // указатели смотрели на записи прежнего журнала
@@ -357,6 +370,82 @@ void Shell::command_time() {
     std::cout << "Invalid date 2026-13-01: " << invalid.value() << " (expected -1)\n";
 }
 
+// Опыты со временем жизни на файле загруженного журнала.
+void Shell::command_demo() {
+    if (!require_log()) {
+        return;
+    }
+    const std::string& path = book_.path();
+    FileReader::trace = true;
+
+    std::cout << "1. A stack object is destroyed when the block ends:\n";
+    {
+        FileReader reader(path);
+        std::cout << "  inside the block, open files: " << FileReader::open_count() << '\n';
+    }   // здесь деструктор reader закрывает файл
+    std::cout << "  after the block, open files: " << FileReader::open_count() << "\n\n";
+
+    std::cout << "2. The log is loaded in the constructor; the file is closed before\n"
+              << "   the constructor returns, and the log lives on:\n";
+    {
+        LogBook book(path);
+        std::cout << "  log created, records: " << book.count()
+                  << ", open files: " << FileReader::open_count() << '\n';
+    }
+    std::cout << '\n';
+
+    std::cout << "3. An exception in the middle of reading:\n";
+    try {
+        LogBook::read_until_failure(path, 3);
+    } catch (const std::exception& error) {
+        std::cout << "  caught: " << error.what() << '\n';
+    }
+    std::cout << "  open files: " << FileReader::open_count()
+              << " - the destructor closed the file during stack unwinding\n\n";
+
+    std::cout << "4. No file - no log object is created:\n";
+    try {
+        LogBook book("no-such-file.log");
+        std::cout << "  this line is never printed\n";
+    } catch (const std::exception& error) {
+        std::cout << "  caught: " << error.what() << '\n';
+    }
+    std::cout << "  open files: " << FileReader::open_count() << "\n\n";
+
+    // Владение файлом можно передать: перемещение отдаёт FILE * другому
+    // объекту, и закроет файл ровно один деструктор.
+    std::cout << "5. Moving the owner: the file is closed exactly once:\n";
+    {
+        FileReader first(path);
+        FileReader second = std::move(first);
+        std::cout << "  after the move, open files: " << FileReader::open_count() << '\n';
+    }
+    std::cout << "  after the block, open files: " << FileReader::open_count() << '\n';
+
+    FileReader::trace = false;
+}
+
+// Загружает и уничтожает журнал times раз. Память записей освобождает
+// деструктор вектора, файл закрывает деструктор FileReader.
+void Shell::command_stress(const std::vector<std::string>& words) {
+    if (!require_log()) {
+        return;
+    }
+    long times = 20;
+    if (words.size() >= 2 && (!parse_long(words[1], times) || times <= 0)) {
+        std::cout << "stress needs a positive number, e.g. stress 100\n";
+        return;
+    }
+    long records = 0;
+    for (long i = 0; i < times; ++i) {
+        LogBook book(book_.path());
+        records = book.count();
+    }
+    std::cout << "Logs loaded and destroyed: " << times << ", records in each: " << records
+              << '\n';
+    std::cout << "Open files after all cycles: " << FileReader::open_count() << '\n';
+}
+
 bool Shell::execute(const std::vector<std::string>& words) {
     const std::string& name = words[0];
     if (name == "load") {
@@ -414,6 +503,10 @@ bool Shell::execute(const std::vector<std::string>& words) {
         filter_.print();
     } else if (name == "time") {
         command_time();
+    } else if (name == "demo") {
+        command_demo();
+    } else if (name == "stress") {
+        command_stress(words);
     } else if (name == "help") {
         print_help();
     } else if (name == "quit") {

@@ -14,8 +14,9 @@
 // одного объекта, а команды — его закрытые методы.
 class Shell {
 public:
-    // Загружает журнал при запуске. Возвращает то же, что LogBook::load.
-    LogStatus open(const std::string& path);
+    // Загружает журнал при запуске. Ошибка — LogError, как у конструктора
+    // LogBook.
+    void open(const std::string& path);
 
     // Интерактивный цикл: читает строки, пока не будет quit или конца ввода.
     void run();
@@ -42,6 +43,8 @@ private:
     void command_between(const std::vector<std::string>& words);
     void command_level(const std::vector<std::string>& words);
     static void command_time();
+    void command_demo();
+    void command_stress(const std::vector<std::string>& words);
     static void print_help();
 
     LogBook book_;

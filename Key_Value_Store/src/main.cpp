@@ -4,9 +4,9 @@
 
 #include "console.hpp"
 
-// Практика 9: проект переписан на C++. Всё, что умело хранилище на практике 8,
-// осталось, но устроено классами: запись, хранилище, два хранилища, разбор
-// строки, упорядоченные пары и консоль.
+// Практика 10: хранилище открывается конструктором и закрывается
+// деструктором; файлом журнала владеет JournalFile. Всё, что умела
+// программа на практике 9, осталось; добавились команды demo и stress.
 //
 //   ./kvstore                        — интерактивный режим
 //   ./kvstore put name "Ivan Petrov" — одна команда и выход
@@ -25,25 +25,21 @@ int main(int argc, char* argv[]) {
         first = argv[2];
         shift = 3;
     }
-    // Консоль весит немного: таблицы и строки лежат в куче, их выделяют
-    // стандартные контейнеры.
-    Console console;
-    KvStatus status = console.open(first, "store2.db");
-    if (status != KvStatus::ok) {
-        std::cerr << "Cannot open the stores: " << Store::status_text(status) << '\n';
+    // Если журнал не открылся, конструктор Console не завершится:
+    // исключение придёт сюда, и закрывать будет нечего. Это ошибка запуска —
+    // в поток ошибок и код 1.
+    try {
+        Console console(first, "store2.db");
+        if (argc > shift) {
+            // Слова команды — аргументы программы. Вектор строк строится сразу
+            // из диапазона указателей argv + shift … argv + argc.
+            std::vector<std::string> words(argv + shift, argv + argc);
+            return console.execute(words) == Console::Result::error ? 1 : 0;
+        }
+        console.run_interactive();
+    } catch (const KvError& error) {
+        std::cerr << "Cannot open the stores: " << error.what() << '\n';
         return 1;
     }
-    int result = 0;
-    if (argc > shift) {
-        // Слова команды — аргументы программы. Вектор строк строится сразу
-        // из диапазона указателей argv + shift … argv + argc.
-        std::vector<std::string> words(argv + shift, argv + argc);
-        result = console.execute(words) == Console::Result::error ? 1 : 0;
-    } else {
-        console.run_interactive();
-    }
-    // Закрыть хранилища нужно явно: объект консоли сам этого не сделает.
-    // На практике 10 эту строку заменит деструктор.
-    console.close();
-    return result;
+    return 0;   // хранилища закрыты деструктором console при выходе из блока try
 }

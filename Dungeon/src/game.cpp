@@ -3,6 +3,8 @@
 #include <climits>
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -96,26 +98,23 @@ void Game::print_commands() {
     std::cout << "  help (h), quit (q)\n";
 }
 
-bool Game::start_random(int width, int height, unsigned int seed) {
-    if (!generator_.generate(map_, width, height, seed)) {
-        return false;
+// map_ создаётся в списке инициализации: если размер неверный, конструктор
+// карты бросит исключение, и тело конструктора игры даже не начнётся.
+// hero_ — после карты, на стартовой клетке пустой комнаты (1, 1).
+Game::Game(int width, int height, unsigned int seed)
+    : map_(width, height), hero_(map_.start_x(), map_.start_y()) {
+    if (!generator_.generate(map_, seed)) {
+        // Исключение из тела конструктора: уже созданные поля — карта,
+        // список, генератор — разрушатся сами, и клетки карты освободятся.
+        throw std::runtime_error("cannot build a passable level of this size");
     }
-    monsters_.clear();
-    hero_.reset(map_.start_x(), map_.start_y());
-    turns_ = 0;
     // Монстры селятся сразу после генерации: rand продолжает ту же
     // последовательность, что и в версии на C, и монстры встают в те же клетки.
     spawn_monsters(map_.width() * map_.height() / 100 + 1);
-    return true;
 }
 
-LoadStatus Game::start_from_file(const std::string& path, int& bad_line) {
-    LoadStatus status = map_.load(path, bad_line, monsters_);
-    if (status == LoadStatus::ok) {
-        hero_.reset(map_.start_x(), map_.start_y());
-        turns_ = 0;
-    }
-    return status;
+Game::Game(const std::string& path)
+    : map_(path, monsters_), hero_(map_.start_x(), map_.start_y()) {
 }
 
 void Game::draw() const {
@@ -204,14 +203,20 @@ void Game::command_level(const std::string* path) {
         std::cout << "Which file? Example: level levels/cave.txt\n";
         return;
     }
-    int line = 0;
-    LoadStatus status = map_.load(*path, line, monsters_);
-    if (status != LoadStatus::ok) {
-        std::cout << "Level " << *path << " not loaded: " << Map::status_text(status);
-        if (line > 0) {
-            std::cout << " (line " << line << ")";
-        }
-        std::cout << "\nThe game goes on at the previous level.\n";
+    // Новый уровень строится в отдельных объектах. Если файл испорчен,
+    // конструктор бросит исключение, новых объектов не будет, а текущие
+    // карта и монстры останутся какими были.
+    try {
+        MonsterList monsters;
+        Map map(*path, monsters);
+        // Перемещающее присваивание: старые клетки освобождаются, новые
+        // переходят к map_ без копирования. После этого map — пустая
+        // карта, и её деструктор в конце блока ничего не освободит.
+        map_ = std::move(map);
+        monsters_ = std::move(monsters);
+    } catch (const LevelError& error) {
+        std::cout << "Level " << *path << " not loaded: " << error.what()
+                  << "\nThe game goes on at the previous level.\n";
         return;
     }
     hero_.place_at(map_.start_x(), map_.start_y());

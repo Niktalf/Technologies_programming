@@ -5,8 +5,9 @@
 
 #include "editor.hpp"
 
-// Практика 9: проект переписан на C++. Всё, что умел редактор на практике 8,
-// осталось, но устроено классами: цвет, изображение и редактор.
+// Практика 10: изображение само выделяет и освобождает память под пиксели.
+// Всё, что умел редактор на практике 9, осталось; добавились команды demo
+// и stress — опыты со временем жизни, копированием и перемещением.
 //
 //   ./raster                             — интерактивный режим
 //   ./raster <file> <operation> [args]   — одна операция, результат в файл
@@ -24,15 +25,6 @@ void print_usage(const char* program) {
               << "  " << program << " checker.ppm gen checker 16\n";
 }
 
-// Редактор весит шесть мегабайт: два изображения с массивами наибольшего
-// размера внутри. В стеке ему не место — стек обычно один-восемь мегабайт.
-// static у локальной переменной: объект создаётся один раз и живёт
-// до конца программы, но лежит не в стеке, а рядом с глобальными данными.
-Editor& the_editor() {
-    static Editor editor;
-    return editor;
-}
-
 // Одна операция. Если после неё есть изображение, оно записывается в файл:
 // так редактор можно вызывать из скриптов для генерации тестовых картинок.
 int run_once(int argc, char* argv[]) {
@@ -44,7 +36,9 @@ int run_once(int argc, char* argv[]) {
         print_usage(argv[0]);
         return 1;
     }
-    Editor& editor = the_editor();
+    // Редактор маленький: пиксели изображения лежат в куче. Обычная
+    // локальная переменная — и деструктор освободит всё при выходе.
+    Editor editor;
     editor.set_path(argv[1]);
     std::vector<std::string> words(argv + 2, argv + argc);
     editor.execute(words);
@@ -64,7 +58,7 @@ int run_once(int argc, char* argv[]) {
 // Интерактивный режим: операции по одной, пока не будет команды выхода
 // или ввод не кончится. Обе причины сводятся к одному флагу running.
 int run_interactive() {
-    Editor& editor = the_editor();
+    Editor editor;
     std::cout << "Raster editor. Type help for the list of operations.\n";
     bool running = true;
     while (running) {

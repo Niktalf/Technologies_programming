@@ -1,28 +1,24 @@
 #include "session.hpp"
 
-KvStatus Session::open(const std::string& first, const std::string& second) {
-    paths_[0] = first;
-    paths_[1] = second;
-    current_ = 0;
-    KvStatus status = KvStatus::ok;
-    for (int i = 0; i < STORES && status == KvStatus::ok; ++i) {
-        status = stores_[i].open(paths_[i]);
-    }
-    if (status != KvStatus::ok) {
-        close();   // что успели открыть — закрываем
-    }
-    return status;
-}
-
-void Session::close() {
-    for (Store& store : stores_) {
-        store.close();   // закрыть закрытое безопасно
+Session::Session(const std::string& first, const std::string& second)
+    : paths_{ first, second } {
+    for (int i = 0; i < STORES; ++i) {
+        // Временный открытый Store перемещается на место пустого.
+        stores_[i] = Store(paths_[i]);
     }
 }
 
-KvStatus Session::open_current(const std::string& path) {
+void Session::close_current() {
+    // Перемещающее присваивание пустого хранилища: поле journal_ прежнего
+    // закрывает свой файл, таблица освобождается.
+    stores_[current_] = Store();
+}
+
+void Session::open_current(const std::string& path) {
+    // Сначала новое хранилище, потом присваивание. Если конструктор бросит
+    // исключение, присваивания не будет, и текущее останется прежним.
+    stores_[current_] = Store(path);
     paths_[current_] = path;
-    return stores_[current_].open(path);   // open сам закрывает прежний журнал
 }
 
 bool Session::select(int number) {

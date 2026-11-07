@@ -18,16 +18,17 @@ constexpr int STATE_BLINDED = 1;
 
 } // namespace
 
-void Hero::reset(int x, int y) {
-    x_ = x;
-    y_ = y;
-    hp_max_ = 30;
-    hp_ = hp_max_;
-    attack_ = 5;
-    gold_ = 0;
-    depth_ = 1;
-    states_ = 0;
-    items_ = { Item::potion, Item::antidote, Item::torch, Item::potion };
+// Конструктор по умолчанию передаёт работу второму конструктору:
+// так начальные значения записаны в одном месте.
+Hero::Hero()
+    : Hero(1, 1) {
+}
+
+// Список инициализации: поля получают значения до входа в тело
+// конструктора, в порядке объявления в классе.
+Hero::Hero(int x, int y, int hp)
+    : x_(x), y_(y), hp_(hp), hp_max_(hp),
+      items_{ Item::potion, Item::antidote, Item::torch, Item::potion } {
 }
 
 void Hero::place_at(int x, int y) {
