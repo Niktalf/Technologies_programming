@@ -1,26 +1,25 @@
 cmake_minimum_required(VERSION 4.0)
-project(dungeon LANGUAGES C)
+project(dungeon LANGUAGES CXX)
 
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(
         ${PROJECT_NAME}_core
-        src/command.c
-        src/entities.c
-        src/game.c
-        src/level.c
-        src/map.c
-        src/reach.c
-        src/status.c
+        src/exit_search.cpp
+        src/game.cpp
+        src/hero.cpp
+        src/level_generator.cpp
+        src/map.cpp
+        src/monster_list.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 
 add_executable(
         ${PROJECT_NAME}
-        src/main.c
+        src/main.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
