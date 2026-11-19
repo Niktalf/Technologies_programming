@@ -4,6 +4,8 @@
 #include <fstream>
 #include <utility>
 
+#include "pixel_ops.hpp"
+
 namespace {
 
 // Больше этого числа в заголовке и данных PPM не бывает: максимум
@@ -119,20 +121,28 @@ ImageStatus PpmFile::read_header(std::istream& file, PpmFormat& format, int& wid
 
 ImageStatus PpmFile::read_pixels(std::istream& file, PpmFormat format, int maximum,
                                  Image& image) {
-    for (int y = 0; y < image.height(); ++y) {
-        for (int x = 0; x < image.width(); ++x) {
-            int c[3];
-            // Файл оборван или значение больше объявленного максимума.
-            if (!read_channels(file, format, c)
-                || c[0] > maximum || c[1] > maximum || c[2] > maximum) {
-                return ImageStatus::corrupt;
-            }
-            image.set_pixel(x, y, Color::from_rgb(scale_channel(c[0], maximum),
-                                                  scale_channel(c[1], maximum),
-                                                  scale_channel(c[2], maximum)));
+    // Чтение — тоже обход с координатами: точки идут в файле в том же
+    // порядке, в каком их обходит for_each_pixel_at. Операция читает три
+    // канала и возвращает цвет. Захват по ссылке безопасен: лямбда живёт
+    // только внутри вызова, а file и status — до конца метода.
+    ImageStatus status = ImageStatus::ok;
+    for_each_pixel_at(image, [&](Color old, int, int) {
+        int c[3];
+        // После первой ошибки дальше не читаем: остаток обхода проходит
+        // вхолостую, а файл уже признан испорченным.
+        if (status != ImageStatus::ok) {
+            return old;
         }
-    }
-    return ImageStatus::ok;
+        // Файл оборван или значение больше объявленного максимума.
+        if (!read_channels(file, format, c) || c[0] > maximum || c[1] > maximum
+            || c[2] > maximum) {
+            status = ImageStatus::corrupt;
+            return old;
+        }
+        return Color::from_rgb(scale_channel(c[0], maximum), scale_channel(c[1], maximum),
+                               scale_channel(c[2], maximum));
+    });
+    return status;
 }
 
 ImageStatus PpmFile::read(const std::string& path, Image& image, PpmFormat& format) {
@@ -175,22 +185,20 @@ ImageStatus PpmFile::write(const std::string& path, const Image& image, PpmForma
          << image.width() << ' ' << image.height() << '\n' << Color::CHANNEL_MAX << '\n';
     // В тексте числа разделяются пробелами, строки изображения — переводом
     // строки. Без разделителей файл не откроет ни один просмотрщик.
-    for (int y = 0; y < image.height() && file; ++y) {
-        for (int x = 0; x < image.width() && file; ++x) {
-            Color c = image.pixel(x, y);
-            if (format == PpmFormat::text) {
-                file << static_cast<int>(c.red()) << ' ' << static_cast<int>(c.green()) << ' '
-                     << static_cast<int>(c.blue()) << ' ';
-            } else {
-                file.put(static_cast<char>(c.red()));
-                file.put(static_cast<char>(c.green()));
-                file.put(static_cast<char>(c.blue()));
-            }
-        }
+    const int last_x = image.width() - 1;
+    visit_pixels(image, [&file, format, last_x](Color c, int x, int) {
         if (format == PpmFormat::text) {
+            file << static_cast<int>(c.red()) << ' ' << static_cast<int>(c.green()) << ' '
+                 << static_cast<int>(c.blue()) << ' ';
+        } else {
+            file.put(static_cast<char>(c.red()));
+            file.put(static_cast<char>(c.green()));
+            file.put(static_cast<char>(c.blue()));
+        }
+        if (format == PpmFormat::text && x == last_x) {
             file << '\n';
         }
-    }
+    });
     // Часть ошибок записи видна только при закрытии: буфер уходит на диск
     // именно тогда. Поэтому файл закрывается явно и проверяется после.
     file.close();

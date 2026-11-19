@@ -17,7 +17,7 @@ public:
     KvStatus put(const std::string& key, const std::string& value, bool& existed) override;
     KvStatus get(const std::string& key, std::string& value) const override;
     KvStatus remove(const std::string& key) override;
-    std::vector<std::pair<std::string, std::string>> pairs() const override;
+    long for_each(const Visitor& visit) const override;
     std::size_t size() const override { return data_.size(); }
     bool repaired() const override { return false; }
     std::string describe() const override;

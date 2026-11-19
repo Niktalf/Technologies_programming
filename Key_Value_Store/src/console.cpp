@@ -69,6 +69,9 @@ void Console::print_help() {
               << "  del <key>            - delete the pair\n"
               << "  list                 - list all pairs\n"
               << "  sorted               - all pairs in ascending key order\n"
+              << "  keys                 - all keys\n"
+              << "  count                - count the pairs by a traversal\n"
+              << "  prefix <start> [n]   - pairs whose key starts with start, at most n\n"
               << "  range <from> <to>    - pairs with keys in the range, bounds included\n"
               << "  stats                - keys and journal records\n"
               << "  use <1|2>            - switch to the other store\n"
@@ -142,10 +145,60 @@ Console::Result Console::command_list() {
         return Result::ok;
     }
     // Порядок — порядок таблицы, то есть произвольный. Упорядоченный
-    // вывод — команда sorted.
-    for (const auto& pair : session_.current().pairs()) {
-        std::cout << pair.first << " = " << pair.second << '\n';
+    // вывод — команда sorted. Функция обхода печатает пару и просит
+    // продолжать: true.
+    session_.current().for_each([](const std::string& key, const std::string& value) {
+        std::cout << key << " = " << value << '\n';
+        return true;
+    });
+    return Result::ok;
+}
+
+// keys — только ключи, через тот же обход.
+Console::Result Console::command_keys() {
+    long shown = session_.current().for_each([](const std::string& key, const std::string&) {
+        std::cout << key << '\n';
+        return true;
+    });
+    std::cout << "Keys: " << shown << '\n';
+    return Result::ok;
+}
+
+// count — сколько пар насчитает обход. Должно совпасть с размером таблицы:
+// это проверка, что обход ничего не пропускает.
+Console::Result Console::command_count() {
+    const Engine& store = session_.current();
+    long counted = store.for_each([](const std::string&, const std::string&) { return true; });
+    std::cout << "Pairs counted by the traversal: " << counted << ", size of the store: "
+              << store.size() << '\n';
+    return Result::ok;
+}
+
+// prefix <начало> [сколько] — пары, ключ которых начинается с начала.
+// Если задано сколько, обход останавливается, найдя столько пар: функция
+// обхода возвращает false, и остальные пары даже не перебираются.
+Console::Result Console::command_prefix(const std::vector<std::string>& words) {
+    long limit = 0;   // 0 — без ограничения
+    if (words.size() < 2 || words.size() > 3
+        || (words.size() == 3 && (!parse_long(words[2], limit) || limit <= 0))) {
+        std::cout << "Usage: prefix <start of the key> [how many]\n";
+        return Result::error;
     }
+    const std::string& start = words[1];
+    long found = 0;
+    // Захват по ссылке: start, limit и found живут до конца метода, а лямбда —
+    // только внутри вызова for_each. Через ссылку на found лямбда сообщает,
+    // сколько нашла.
+    long visited = session_.current().for_each(
+        [&start, &found, limit](const std::string& key, const std::string& value) {
+            if (key.compare(0, start.size(), start) == 0) {
+                std::cout << key << " = " << value << '\n';
+                ++found;
+            }
+            return limit == 0 || found < limit;
+        });
+    std::cout << "Found: " << found << ", pairs visited: " << visited << " of "
+              << session_.current().size() << '\n';
     return Result::ok;
 }
 
@@ -559,6 +612,15 @@ Console::Result Console::execute_on_store(const std::vector<std::string>& words)
     }
     if (name == "sorted") {
         return command_sorted();
+    }
+    if (name == "keys") {
+        return command_keys();
+    }
+    if (name == "count") {
+        return command_count();
+    }
+    if (name == "prefix") {
+        return command_prefix(words);
     }
     if (name == "range") {
         return command_range(words);

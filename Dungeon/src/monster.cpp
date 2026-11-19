@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <stdexcept>
+#include <utility>
 
 #include "game.hpp"
 
@@ -10,12 +11,35 @@ int Monster::created_count_ = 0;
 // Первой строится часть Creature, потом поле attack_. Если здоровье
 // неверное, исключение вылетит из конструктора Creature, и до счётчика
 // дело не дойдёт.
-Monster::Monster(int x, int y, int hp_max, int attack)
-    : Creature(x, y, hp_max), attack_(attack) {
+Monster::Monster(int x, int y, int hp_max, int attack, MoveRule rule)
+    : Creature(x, y, hp_max), attack_(attack), native_rule_(rule), rule_(std::move(rule)) {
     if (attack <= 0) {
         throw std::invalid_argument("monster attack must be positive");
     }
+    if (!native_rule_) {
+        throw std::invalid_argument("a monster needs a move rule");
+    }
     ++created_count_;
+}
+
+void Monster::set_rule(MoveRule rule) {
+    // Пустое правило не принимается: инвариант «у монстра есть правило».
+    if (rule) {
+        rule_ = std::move(rule);
+    }
+}
+
+void Monster::act(Game& game) {
+    if (next_to_hero(game)) {
+        game.hit_hero(*this);
+        return;
+    }
+    // Вызов правила — вызов функции, которая хранится в поле. Что именно
+    // выполнится, решилось тогда, когда правило положили в поле.
+    Step step_to = rule_(*this, game);
+    if (step_to != Step::stay) {
+        step(game, step_dx(step_to), step_dy(step_to));   // занято — стоит на месте
+    }
 }
 
 bool Monster::next_to_hero(const Game& game) const {
@@ -35,58 +59,15 @@ bool Monster::step(const Game& game, int dx, int dy) {
 }
 
 Goblin::Goblin(int x, int y)
-    : Monster(x, y, HP, ATTACK) {
-}
-
-void Goblin::act(Game& game) {
-    if (next_to_hero(game)) {
-        game.hit_hero(*this);
-        return;
-    }
-    int dx = game.hero().x() - x();
-    int dy = game.hero().y() - y();
-    if (std::abs(dx) + std::abs(dy) > SIGHT) {
-        return;   // героя не видно — стоит
-    }
-    // Шаг по той оси, по которой до героя дальше. Не вышло — по другой.
-    int sx = dx > 0 ? 1 : (dx < 0 ? -1 : 0);
-    int sy = dy > 0 ? 1 : (dy < 0 ? -1 : 0);
-    bool horizontal_first = std::abs(dx) >= std::abs(dy);
-    int first_dx = horizontal_first ? sx : 0;
-    int first_dy = horizontal_first ? 0 : sy;
-    int second_dx = horizontal_first ? 0 : sx;
-    int second_dy = horizontal_first ? sy : 0;
-    bool moved = (first_dx != 0 || first_dy != 0) && step(game, first_dx, first_dy);
-    if (!moved && (second_dx != 0 || second_dy != 0)) {
-        step(game, second_dx, second_dy);
-    }
+    : Monster(x, y, HP, ATTACK, chase(SIGHT)) {
 }
 
 Bat::Bat(int x, int y)
-    : Monster(x, y, HP, ATTACK) {
-}
-
-void Bat::act(Game& game) {
-    static const int DX[4] = { 0, 0, 1, -1 };
-    static const int DY[4] = { -1, 1, 0, 0 };
-    int direction = std::rand() % 4;
-    int nx = x() + DX[direction];
-    int ny = y() + DY[direction];
-    if (nx == game.hero().x() && ny == game.hero().y()) {
-        game.hit_hero(*this);
-        return;
-    }
-    step(game, DX[direction], DY[direction]);   // занято — мышь остаётся на месте
+    : Monster(x, y, HP, ATTACK, wander()) {
 }
 
 Skeleton::Skeleton(int x, int y)
-    : Monster(x, y, HP, ATTACK) {
-}
-
-void Skeleton::act(Game& game) {
-    if (next_to_hero(game)) {
-        game.hit_hero(*this);
-    }
+    : Monster(x, y, HP, ATTACK, stand_still()) {
 }
 
 std::unique_ptr<Monster> make_monster(char symbol, int x, int y) {

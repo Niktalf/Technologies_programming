@@ -2,6 +2,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <utility>
 
 namespace {
 
@@ -81,6 +82,21 @@ void HourReport::print() const {
                   << std::setw(6) << by_hour_[h] << "  "
                   << std::string(static_cast<std::size_t>(bar), '#') << '\n';
     }
+}
+
+MatchReport::MatchReport(Predicate condition, std::string description)
+    : condition_(std::move(condition)), description_(std::move(description)) {
+}
+
+void MatchReport::accept(const LogRecord& record) {
+    ++total_;
+    if (condition_(record)) {
+        ++matched_;
+    }
+}
+
+void MatchReport::print() const {
+    std::cout << "  " << description_ << ": " << matched_ << " of " << total_ << '\n';
 }
 
 std::unique_ptr<LogReport> make_report(const std::string& name) {

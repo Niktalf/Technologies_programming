@@ -58,6 +58,28 @@ void MonsterList::act_all(Game& game) {
     }
 }
 
+void MonsterList::set_rule_all(const MoveRule& rule) {
+    // Каждый монстр получает свою копию правила: std::function копируется
+    // вместе со всем, что захватила лямбда.
+    for (std::unique_ptr<Monster>& monster : monsters_) {
+        monster->set_rule(rule);
+    }
+}
+
+void MonsterList::make_all_drunk() {
+    // drunk получает текущее правило монстра и возвращает новое. У каждого
+    // монстра — своё: пьяный гоблин гонится за героем, пьяная мышь порхает.
+    for (std::unique_ptr<Monster>& monster : monsters_) {
+        monster->set_rule(drunk(monster->rule()));
+    }
+}
+
+void MonsterList::reset_rules() {
+    for (std::unique_ptr<Monster>& monster : monsters_) {
+        monster->reset_rule();
+    }
+}
+
 void MonsterList::print() const {
     std::cout << "Monsters: " << count() << '\n';
     for (int i = 0; i < count() && i < SHOWN; ++i) {

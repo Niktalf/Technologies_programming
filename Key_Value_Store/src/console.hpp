@@ -37,6 +37,9 @@ private:
     Result command_del(const std::vector<std::string>& words);
     Result command_list();
     Result command_sorted();
+    Result command_keys();
+    Result command_count();
+    Result command_prefix(const std::vector<std::string>& words);
     Result command_range(const std::vector<std::string>& words);
     Result command_stats();
     Result command_copy(const std::vector<std::string>& words);

@@ -52,11 +52,12 @@ int count_visit(KvStore& visits, const std::string& page) {
 
 int list(const KvStore& visits) {
     long total = 0;
-    for (const auto& entry : visits.pairs()) {
-        long count = to_number(entry.second);
-        std::cout << "  " << entry.first << ": " << count << '\n';
+    visits.for_each([&total](const std::string& page, const std::string& stored) {
+        long count = to_number(stored);
+        std::cout << "  " << page << ": " << count << '\n';
         total += count;
-    }
+        return true;
+    });
     std::cout << "Pages: " << visits.size() << ", visits in total: " << total << '\n';
     return 0;
 }

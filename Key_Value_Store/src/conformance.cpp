@@ -1,6 +1,7 @@
 #include "conformance.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <iostream>
 #include <string>
 #include <utility>
@@ -22,13 +23,23 @@ std::string value_of(const Engine& engine, const std::string& key) {
     return engine.get(key, value) == KvStatus::ok ? value : "<none>";
 }
 
+// Все пары движка, собранные обходом, — только для сравнения в проверках.
+std::vector<std::pair<std::string, std::string>> collect(const Engine& engine) {
+    std::vector<std::pair<std::string, std::string>> pairs;
+    engine.for_each([&pairs](const std::string& key, const std::string& value) {
+        pairs.emplace_back(key, value);
+        return true;
+    });
+    return pairs;
+}
+
 } // namespace
 
 int run_conformance(Engine& engine) {
     int failures = 0;
     bool existed = true;
 
-    expect(engine.size() == 0 && engine.pairs().empty(), "a new engine is empty", failures);
+    expect(engine.size() == 0 && collect(engine).empty(), "a new engine is empty", failures);
 
     KvStatus status = engine.put("alpha", "1", existed);
     expect(status == KvStatus::ok && !existed, "put of a new key: ok, did not exist", failures);
@@ -74,11 +85,38 @@ int run_conformance(Engine& engine) {
     std::vector<std::pair<std::string, std::string>> expected = {
         { longest_key, longest_value }, { "empty", "" }, { "odd", odd }
     };
-    std::vector<std::pair<std::string, std::string>> actual = engine.pairs();
+    std::vector<std::pair<std::string, std::string>> actual = collect(engine);
     std::sort(expected.begin(), expected.end());
     std::sort(actual.begin(), actual.end());
-    expect(actual == expected && engine.size() == 3, "pairs returns exactly the stored pairs",
+    expect(actual == expected && engine.size() == 3, "for_each visits exactly the stored pairs",
            failures);
+
+    // Досрочная остановка: функция обхода отвечает false на первой паре.
+    // Обход должен на ней и закончиться, а не дозвать остальные.
+    int calls = 0;
+    long visited = engine.for_each([&calls](const std::string&, const std::string&) {
+        ++calls;
+        return false;
+    });
+    expect(calls == 1 && visited == 1, "for_each stops when the visitor returns false", failures);
+
+    // Диапазон согласован с полным обходом: те же пары, отобранные по ключу.
+    std::vector<std::pair<std::string, std::string>> in_range;
+    engine.for_each_in_range("e", "p", [&in_range](const std::string& key,
+                                                    const std::string& value) {
+        in_range.emplace_back(key, value);
+        return true;
+    });
+    std::sort(in_range.begin(), in_range.end());
+    // Чего ждём: пары полного обхода (actual уже отсортирован) с ключами
+    // в границах — "empty", "odd" и длинный ключ из букв k.
+    std::vector<std::pair<std::string, std::string>> expected_range;
+    std::copy_if(actual.begin(), actual.end(), std::back_inserter(expected_range),
+                 [](const std::pair<std::string, std::string>& pair) {
+                     return !(pair.first < "e") && !(std::string("p") < pair.first);
+                 });
+    expect(in_range == expected_range && in_range.size() == 3,
+           "for_each_in_range gives the pairs of for_each within the bounds", failures);
 
     for (int i = 0; i < 1000; ++i) {
         engine.put("key" + std::to_string(i), std::to_string(i * i), existed);

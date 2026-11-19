@@ -8,6 +8,7 @@
 #include "level.hpp"
 #include "log_book.hpp"
 #include "log_source.hpp"
+#include "record_filter.hpp"
 #include "log_view.hpp"
 
 // Командная оболочка: журнал, фильтр по уровням, порядок просмотра
@@ -54,6 +55,12 @@ private:
     static void try_to_break();
     void command_stress(const std::vector<std::string>& words);
     void command_stats(const std::string& name) const;
+    void show_selected(const Predicate& condition) const;
+    void command_head_tail(bool head) const;
+    static bool parse_condition(const std::vector<std::string>& words, Predicate& out,
+                                std::string& text);
+    void command_cond(const std::vector<std::string>& words);
+    void command_match(const std::vector<std::string>& words);
     void command_report(const std::vector<std::string>& words);
     std::unique_ptr<LogSource> make_source(const std::vector<std::string>& words,
                                            std::size_t position) const;
@@ -61,5 +68,10 @@ private:
 
     LogBook book_;
     LevelFilter filter_;
+
+    // Практика 13: сохранённое условие — значение типа Predicate в поле.
+    // Его задаёт команда cond, применяет match. По умолчанию — «любая запись».
+    Predicate saved_ = any_record();
+    std::string saved_text_ = "any record";
     LogView view_;
 };

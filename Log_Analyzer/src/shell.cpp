@@ -12,6 +12,7 @@
 #include "file_reader.hpp"
 #include "log_parser.hpp"
 #include "log_report.hpp"
+#include "record_filter.hpp"
 #include "log_source.hpp"
 #include "log_generator.hpp"
 
@@ -57,6 +58,9 @@ void Shell::print_help() {
               << "  stats                      - records by level\n"
               << "  hours                      - distribution by hour\n"
               << "  modules                    - top modules by number of records\n"
+              << "  cond <condition>           - save a condition: level <levels>, module <m>,\n"
+              << "                               grep <word>, between <d> <t> <d> <t> or any\n"
+              << "  match [from <source>]      - records matching the saved condition\n"
               << "  report <what> from <source> - reports on any source of records:\n"
               << "      what:   levels, modules, hours or all, e.g. report levels hours\n"
               << "      source: book | file <path> | files <path> <path> ... |\n"
@@ -193,7 +197,8 @@ void Shell::command_gen(const std::vector<std::string>& words) {
 void Shell::command_count() {
     if (require_log()) {
         std::cout << "Records: " << book_.count() << ", lines in the file: " << book_.lines()
-                  << ", passing the level filter: " << book_.count_matching(filter_) << '\n';
+                  << ", passing the level filter: " << count_matching(book_, by_levels(filter_))
+                  << '\n';
     }
 }
 
@@ -286,20 +291,133 @@ void Shell::command_span() const {
     std::cout << "Earliest: " << first.text() << "\nLatest:   " << last.text() << '\n';
 }
 
+// Выборка по условию и фильтру уровней: первые SHOW записей и сколько
+// нашлось всего. Условие склеено с фильтром уровней функцией both.
+void Shell::show_selected(const Predicate& condition) const {
+    std::vector<const LogRecord*> found = select(book_, both(by_levels(filter_), condition));
+    for (std::size_t i = 0; i < found.size() && i < static_cast<std::size_t>(LogBook::SHOW); ++i) {
+        found[i]->print();
+    }
+    print_found(static_cast<long>(found.size()));
+}
+
+// head и tail: первые или последние SHOW записей, прошедших фильтр уровней.
+void Shell::command_head_tail(bool head) const {
+    std::vector<const LogRecord*> found = select(book_, by_levels(filter_));
+    std::size_t shown = static_cast<std::size_t>(LogBook::SHOW);
+    std::size_t first = head || found.size() <= shown ? 0 : found.size() - shown;
+    for (std::size_t i = first; i < found.size() && i < first + shown; ++i) {
+        found[i]->print();
+    }
+}
+
+// Условие по словам: level <уровни> | module <имя> | grep <слово> |
+// between <дата> <время> <дата> <время> | any. Удалось — true, условие
+// в out, его описание в text.
+bool Shell::parse_condition(const std::vector<std::string>& words, Predicate& out,
+                            std::string& text) {
+    const std::string& kind = words[1];
+    if (kind == "any" && words.size() == 2) {
+        out = any_record();
+        text = "any record";
+        return true;
+    }
+    if ((kind == "module" || kind == "grep") && words.size() == 3) {
+        out = kind == "module" ? by_module(words[2]) : by_text(words[2]);
+        text = kind + " " + words[2];
+        return true;
+    }
+    if (kind == "between" && words.size() == 6) {
+        Timestamp from = Timestamp::parse(words[2], words[3]);
+        Timestamp to = Timestamp::parse(words[4], words[5]);
+        if (from.valid() && to.valid()) {
+            out = between(from, to);
+            text = "between " + from.text() + " and " + to.text();
+            return true;
+        }
+    }
+    if (kind == "level" && words.size() >= 3) {
+        LevelFilter levels;
+        levels.allow_none();
+        text = "level";
+        for (std::size_t i = 2; i < words.size(); ++i) {
+            Level level = Level::info;
+            if (!level_from_word(words[i], level)) {
+                return false;
+            }
+            levels.allow(level);
+            text += std::string(" ") + level_name(level);
+        }
+        out = by_levels(levels);
+        return true;
+    }
+    return false;
+}
+
+// cond <условие> — сохранить условие в переменную saved_; cond — показать.
+// Сохранённое условие живёт, пока его не заменят, и применяется командой
+// match к журналу или к любому источнику.
+void Shell::command_cond(const std::vector<std::string>& words) {
+    if (words.size() >= 2) {
+        Predicate condition;
+        std::string text;
+        if (!parse_condition(words, condition, text)) {
+            std::cout << "Usage: cond level <levels> | module <name> | grep <word> |\n"
+                      << "            between <date> <time> <date> <time> | any\n";
+            return;
+        }
+        // Присваивание std::function: старое условие уничтожается, новое
+        // — копия лямбды со всем, что она захватила, — занимает его место.
+        saved_ = condition;
+        saved_text_ = text;
+    }
+    std::cout << "Saved condition: " << saved_text_ << '\n';
+}
+
+// match — записи загруженного журнала по сохранённому условию;
+// match from <источник> — сколько их в любом источнике.
+void Shell::command_match(const std::vector<std::string>& words) {
+    if (words.size() == 1) {
+        if (require_log()) {
+            std::cout << "Condition: " << saved_text_ << '\n';
+            // Фильтр уровней тоже действует: условие склеивается с ним.
+            show_selected(saved_);
+        }
+        return;
+    }
+    if (words[1] != "from") {
+        std::cout << "Usage: match or match from <source>\n";
+        return;
+    }
+    try {
+        std::unique_ptr<LogSource> source = make_source(words, 2);
+        if (!source) {
+            return;
+        }
+        // Сохранённое условие уходит в отчёт, а отчёт — в тот же цикл
+        // run_reports, что и у команды report.
+        std::vector<std::unique_ptr<LogReport>> reports;
+        reports.push_back(std::make_unique<MatchReport>(saved_, saved_text_));
+        long count = run_reports(*source, reports);
+        reports[0]->print();
+        std::cout << "Records: " << count << ", source: " << source->describe() << '\n';
+    } catch (const LogError& error) {
+        std::cout << "Error: " << error.what() << '\n';
+    }
+}
+
 // Команды grep и module: одна выборка, разные условия.
 void Shell::command_search(const std::vector<std::string>& words) {
     if (!require_log()) {
         return;
     }
-    bool by_text = words[0] == "grep";
+    bool text_search = words[0] == "grep";
     if (words.size() < 2) {
-        std::cout << (by_text ? "Search for what? Example: grep timeout\n"
+        std::cout << (text_search ? "Search for what? Example: grep timeout\n"
                               : "Which module? Example: module net\n");
         return;
     }
-    long found = by_text ? book_.print_containing(words[1], filter_)
-                         : book_.print_module(words[1], filter_);
-    print_found(found);
+    show_selected(text_search ? by_text(words[1]) : by_module(words[1]));
 }
 
 void Shell::command_between(const std::vector<std::string>& words) {
@@ -320,7 +438,7 @@ void Shell::command_between(const std::vector<std::string>& words) {
         std::cout << "The interval starts after it ends: no records.\n";
         return;
     }
-    print_found(book_.print_between(from, to, filter_));
+    show_selected(between(from, to));
 }
 
 void Shell::command_level(const std::vector<std::string>& words) {
@@ -601,12 +719,12 @@ bool Shell::execute(const std::vector<std::string>& words) {
         command_count();
     } else if (name == "head" || name == "tail") {
         if (require_log()) {
-            if (name == "head") {
-                book_.print_head(filter_);
-            } else {
-                book_.print_tail(filter_);
-            }
+            command_head_tail(name == "head");
         }
+    } else if (name == "cond") {
+        command_cond(words);
+    } else if (name == "match") {
+        command_match(words);
     } else if (name == "stats" || name == "hours" || name == "modules") {
         if (require_log()) {
             command_stats(name);

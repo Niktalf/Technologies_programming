@@ -75,6 +75,7 @@ public:
 private:
     bool command_move(Hero::Direction direction);
     bool command_attack(std::string* argument);
+    void command_rule(const std::string* argument);
     void command_cell() const;
     void command_check();
     void command_level(const std::string* path);
