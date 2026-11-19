@@ -85,6 +85,30 @@ long JournalFile::recover(std::vector<Record>& records) {
     return 0;
 }
 
+std::vector<Record> JournalFile::records() const {
+    std::vector<Record> result;
+    if (file_ == nullptr) {
+        return result;
+    }
+    // Позиция — общее состояние файла, а не объекта: её запоминаем и
+    // возвращаем, чтобы следующая запись легла туда же, куда легла бы и так.
+    long position = std::ftell(file_);
+    std::fseek(file_, 0, SEEK_SET);
+    Record record;
+    Record::ReadResult status = Record::read(file_, record);
+    while (status == Record::ReadResult::record) {
+        result.push_back(record);
+        status = Record::read(file_, record);
+    }
+    bool failed = std::ferror(file_) != 0;
+    std::clearerr(file_);
+    std::fseek(file_, position, SEEK_SET);
+    if (failed) {
+        throw KvError(KvStatus::io_error, path_);
+    }
+    return result;
+}
+
 void JournalFile::append(const Record& record) {
     append_bytes(record.encode());
 }

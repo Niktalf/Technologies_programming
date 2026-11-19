@@ -13,6 +13,7 @@
 #include "journal_engine.hpp"
 #include "parser.hpp"
 #include "sorted_pairs.hpp"
+#include "store_stats.hpp"
 
 namespace {
 
@@ -70,6 +71,7 @@ void Console::print_help() {
               << "  list                 - list all pairs\n"
               << "  sorted               - all pairs in ascending key order\n"
               << "  keys                 - all keys\n"
+              << "  summary              - sizes, keys by first character, garbage share\n"
               << "  count                - count the pairs by a traversal\n"
               << "  prefix <start> [n]   - pairs whose key starts with start, at most n\n"
               << "  range <from> <to>    - pairs with keys in the range, bounds included\n"
@@ -151,6 +153,31 @@ Console::Result Console::command_list() {
         std::cout << key << " = " << value << '\n';
         return true;
     });
+    return Result::ok;
+}
+
+// summary — сводка по базе. Каждый показатель — комбинация filter, map
+// и reduce из store_stats.hpp. Подробности устройства, в том числе долю
+// мусора журнала, движок описывает сам — describe.
+Console::Result Console::command_summary() {
+    const Engine& store = session_.current();
+    std::cout << "Live keys: " << live_keys(store) << '\n';
+    std::cout << "Keys and values: " << total_bytes(store) << " bytes\n";
+    char mean[32];
+    std::snprintf(mean, sizeof mean, "%.1f", mean_value_size(store));
+    std::cout << "Value size: mean " << mean << ", max " << max_value_size(store)
+              << " bytes\n";
+    std::cout << "Keys by first character:";
+    for (const std::pair<const char, long>& group : keys_by_first_char(store)) {
+        // Печатный символ — как есть, остальные — кодом.
+        if (group.first > ' ' && group.first < 127) {
+            std::cout << ' ' << group.first << ':' << group.second;
+        } else {
+            std::cout << " #" << static_cast<int>(static_cast<unsigned char>(group.first)) << ':'
+                      << group.second;
+        }
+    }
+    std::cout << '\n' << store.describe();
     return Result::ok;
 }
 
@@ -615,6 +642,9 @@ Console::Result Console::execute_on_store(const std::vector<std::string>& words)
     }
     if (name == "keys") {
         return command_keys();
+    }
+    if (name == "summary") {
+        return command_summary();
     }
     if (name == "count") {
         return command_count();

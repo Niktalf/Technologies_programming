@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "monster.hpp"
+#include "monster_query.hpp"
 
 class Game;
 
@@ -29,6 +30,12 @@ public:
     // Забирает монстра себе. Возвращает false и уничтожает его, если
     // указатель пуст или клетка уже занята другим монстром.
     bool add(std::unique_ptr<Monster> monster);
+
+    // filter: указатели на монстров, для которых keep отвечает «да», в порядке
+    // списка. Указатели, а не копии: через них видны настоящие монстры,
+    // и монстр, ударенный после выборки, ударен и в игре. Годны, пока
+    // список не изменился.
+    std::vector<const Monster*> select(const MonsterPredicate& keep) const;
 
     // Номер монстра в клетке (x, y) или -1, если там никого нет.
     int find(int x, int y) const;

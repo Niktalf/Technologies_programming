@@ -96,6 +96,7 @@ void Game::print_commands() {
     std::cout << "  level <file> - load a level; spawn <N> - add monsters\n";
     std::cout << "  hit <N>, on/off/toggle <state>\n";
     std::cout << "  help (h), quit (q)\n";
+    std::cout << "  summary - monsters alive, near the hero and their damage\n";
     std::cout << "  rule <name> - debug: give all monsters the rule chase, flee, stand,\n"
               << "              wander, drunk (one random step in six) or reset\n";
     std::cout << "Monsters: g - goblin, chases you; b - bat, flies at random;\n";
@@ -169,6 +170,29 @@ void Game::command_rule(const std::string* argument) {
     }
     monsters_.set_rule_all(rule);
     std::cout << "All monsters: " << *argument << ".\n";
+}
+
+// Сводка: все показатели — выборки, отображение и свёртки, ни одного
+// цикла с накопителем. Предикаты собираются из готовых функцией both.
+void Game::command_summary() const {
+    constexpr int NEAR = 3;   // «рядом» — не дальше трёх шагов
+    const MonsterPredicate alive = is_alive();
+    const MonsterPredicate near = both(alive, near_hero(*this, NEAR));
+    // Вплотную — на расстоянии одного шага: эти ударят на следующем ходу.
+    const MonsterPredicate adjacent = both(alive, near_hero(*this, 1));
+
+    std::vector<const Monster*> living = monsters_.select(alive);
+    std::vector<const Monster*> close = monsters_.select(near);
+    std::vector<const Monster*> striking = monsters_.select(adjacent);
+    std::vector<char> letters = symbols(living);
+
+    std::cout << "Monsters alive: " << living.size() << ", total health "
+              << total_health(living) << '\n';
+    std::cout << "Within " << NEAR << " steps: " << close.size() << ", total health "
+              << total_health(close) << '\n';
+    std::cout << "Next to the hero: " << striking.size() << ", damage next turn "
+              << total_attack(striking) << " of the hero's " << hero_.hp() << " health\n";
+    std::cout << "On the map: " << std::string(letters.begin(), letters.end()) << '\n';
 }
 
 bool Game::free_cell(int x, int y) const {
@@ -364,6 +388,8 @@ bool Game::execute(std::vector<std::string>& words) {
         return command_attack(argument);
     } else if (name == "rule") {
         command_rule(argument);
+    } else if (name == "summary") {
+        command_summary();
     } else if (is_command(name, "look", "l")) {
         draw();
     } else if (is_command(name, "monsters", "m")) {

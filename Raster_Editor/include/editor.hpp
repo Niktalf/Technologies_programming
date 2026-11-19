@@ -58,6 +58,8 @@ private:
     void command_fill(const std::vector<std::string>& words);
     void command_filltest();
     void command_minmax() const;
+    void command_analyze(const std::vector<std::string>& words) const;
+    void command_levels();
     void command_load(const std::vector<std::string>& words);
     void command_save(const std::vector<std::string>& words);
     static void command_colors();

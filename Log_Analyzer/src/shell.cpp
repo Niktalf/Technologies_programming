@@ -10,6 +10,7 @@
 
 #include "binary_log.hpp"
 #include "file_reader.hpp"
+#include "log_insights.hpp"
 #include "log_parser.hpp"
 #include "log_report.hpp"
 #include "record_filter.hpp"
@@ -58,6 +59,8 @@ void Shell::print_help() {
               << "  stats                      - records by level\n"
               << "  hours                      - distribution by hour\n"
               << "  modules                    - top modules by number of records\n"
+              << "  insights                   - error share, mean interval between errors,\n"
+              << "                               busiest hour, distinct and noisiest modules\n"
               << "  cond <condition>           - save a condition: level <levels>, module <m>,\n"
               << "                               grep <word>, between <d> <t> <d> <t> or any\n"
               << "  match [from <source>]      - records matching the saved condition\n"
@@ -289,6 +292,35 @@ void Shell::command_span() const {
         return;
     }
     std::cout << "Earliest: " << first.text() << "\nLatest:   " << last.text() << '\n';
+}
+
+// Пять аналитических запросов: каждый — функция из log_insights.hpp,
+// составленная из filter, map и reduce.
+void Shell::command_insights() const {
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Errors (ERROR and FATAL): " << error_share(book_) * 100.0 << "% of "
+              << book_.count() << " records\n";
+    double interval = 0.0;
+    if (mean_error_interval(book_, interval)) {
+        std::cout << "Mean interval between errors: " << interval << " s ("
+                  << interval / 60.0 << " min)\n";
+    } else {
+        std::cout << "Mean interval between errors: fewer than two errors, no intervals\n";
+    }
+    int hour = 0;
+    long at_hour = 0;
+    if (busiest_hour(book_, hour, at_hour)) {
+        std::cout << "Busiest hour: " << std::setw(2) << std::setfill('0') << hour
+                  << std::setfill(' ') << ":00-" << std::setw(2) << std::setfill('0') << hour
+                  << std::setfill(' ') << ":59, " << at_hour << " records\n";
+    }
+    std::cout << "Distinct modules: " << distinct_modules(book_) << '\n';
+    std::cout << "Noisiest modules:\n";
+    for (const std::pair<std::string, long>& module : noisiest_modules(book_, 10)) {
+        std::cout << "  " << std::left << std::setw(12) << module.first << std::right << ' '
+                  << std::setw(7) << module.second << '\n';
+    }
+    std::cout << std::defaultfloat;
 }
 
 // Выборка по условию и фильтру уровней: первые SHOW записей и сколько
@@ -720,6 +752,10 @@ bool Shell::execute(const std::vector<std::string>& words) {
     } else if (name == "head" || name == "tail") {
         if (require_log()) {
             command_head_tail(name == "head");
+        }
+    } else if (name == "insights") {
+        if (require_log()) {
+            command_insights();
         }
     } else if (name == "cond") {
         command_cond(words);

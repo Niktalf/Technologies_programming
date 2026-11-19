@@ -60,6 +60,7 @@ private:
     static bool parse_condition(const std::vector<std::string>& words, Predicate& out,
                                 std::string& text);
     void command_cond(const std::vector<std::string>& words);
+    void command_insights() const;
     void command_match(const std::vector<std::string>& words);
     void command_report(const std::vector<std::string>& words);
     std::unique_ptr<LogSource> make_source(const std::vector<std::string>& words,

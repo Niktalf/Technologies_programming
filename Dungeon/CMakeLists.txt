@@ -14,6 +14,7 @@ add_library(${PROJECT_NAME}_core
     src/map_view.cpp
     src/map.cpp
     src/monster_list.cpp
+    src/monster_query.cpp
     src/monster.cpp
     src/move_rule.cpp)
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)

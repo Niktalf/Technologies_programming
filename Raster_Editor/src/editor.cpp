@@ -7,6 +7,9 @@
 #include <stdexcept>
 #include <utility>
 
+#include "image_stats.hpp"
+#include "pixel_ops.hpp"
+
 namespace {
 
 // Сравнивает название команды без учёта регистра. Аргументы командной
@@ -95,6 +98,9 @@ void Editor::print_help() {
               << "  contrast <percent>       - contrast, 100 keeps the image as is\n"
               << "  blur                     - blur, each point is the mean of a 3 x 3 square\n"
               << "  vignette <percent>       - darken towards the corners, e.g. vignette 60\n"
+              << "  analyze [threshold]      - mean brightness, histogram, share of dark points,\n"
+              << "                             most frequent color, brightness range\n"
+              << "  levels                   - stretch every channel to the full 0-255 range\n"
               << "  filters <f1> <f2> ...    - a chain of filters, e.g. filters gray blur\n"
               << "  size <w> <h>             - create an empty image\n"
               << "  crop <x> <y> <w> <h>     - crop\n"
@@ -400,13 +406,101 @@ void Editor::command_minmax() const {
     if (!require_image()) {
         return;
     }
+    // Практика 14: map (яркость каждой точки), затем reduce (пара минимум —
+    // максимум за один проход). На практике 13 это был цикл в Image::min_max.
     int darkest = 0;
     int brightest = 0;
-    if (!image_.min_max(darkest, brightest)) {
+    std::vector<int> brightness = values(pixels(image_), [](Color c) { return c.luminance(); });
+    if (!luminance_range(brightness, darkest, brightest)) {
         std::cout << "The image is empty.\n";
         return;
     }
     std::cout << "Darkest point: " << darkest << ", brightest: " << brightest << '\n';
+}
+
+// analyze [порог] — пять запросов к изображению, каждый — комбинация filter,
+// map и reduce. Последовательность точек и яркостей строится один раз
+// на команду и переиспользуется всеми запросами.
+void Editor::command_analyze(const std::vector<std::string>& words) const {
+    if (!require_image()) {
+        return;
+    }
+    int threshold = 64;
+    if (words.size() >= 2 && (!parse_int(words[1], threshold) || threshold < 0
+                              || threshold > Color::CHANNEL_MAX + 1)) {
+        std::cout << "The threshold is from 0 to 256, e.g. analyze 64\n";
+        return;
+    }
+    const std::vector<Color> colors = pixels(image_);
+    const std::vector<int> brightness = values(colors, [](Color c) { return c.luminance(); });
+
+    // 1. Средняя яркость: map + reduce.
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << "Mean brightness: " << mean(brightness) << '\n';
+
+    // 2. Гистограмма каналов за один проход. Печатается по восьми корзинам
+    //    по 32 уровня; сумма корзины — свёртка части гистограммы.
+    Histogram histogram(colors);
+    const char* names[3] = { "red  ", "green", "blue " };
+    std::cout << "Histogram, 8 bins of 32 levels:\n";
+    for (int channel = 0; channel < 3; ++channel) {
+        std::cout << "  " << names[channel];
+        for (int bin = 0; bin < 8; ++bin) {
+            std::cout << ' ' << std::setw(7) << histogram.range(channel, bin * 32, bin * 32 + 31);
+        }
+        std::cout << '\n';
+    }
+
+    // 3. Доля точек темнее порога: filter, затем размер выборки.
+    const int limit = threshold;
+    std::size_t dark = select_pixels(colors, [limit](Color c) { return c.luminance() < limit; })
+                           .size();
+    std::cout << "Darker than " << limit << ": " << 100.0 * static_cast<double>(dark)
+              / static_cast<double>(colors.size()) << "%\n";
+
+    // 4. Самый частый цвет: группировка словарём и поиск наибольшего.
+    Color frequent;
+    long times = 0;
+    most_frequent(colors, frequent, times);
+    std::cout << "Most frequent color: " << static_cast<int>(frequent.red()) << ' '
+              << static_cast<int>(frequent.green()) << ' ' << static_cast<int>(frequent.blue())
+              << ", " << times << " points\n";
+
+    // 5. Наименьшая и наибольшая яркость за один проход.
+    int darkest = 0;
+    int brightest = 0;
+    luminance_range(brightness, darkest, brightest);
+    std::cout << "Brightness from " << darkest << " to " << brightest << '\n';
+    std::cout << std::defaultfloat;
+}
+
+// levels — автоматическое выравнивание уровней: каждый канал растягивается
+// так, чтобы его наименьшее встреченное значение стало 0, а наибольшее —
+// 255. Границы берутся из гистограммы; растягивает — обход с лямбдой.
+void Editor::command_levels() {
+    if (!require_image()) {
+        return;
+    }
+    Histogram histogram(pixels(image_));
+    int low[3];
+    int high[3];
+    for (int channel = 0; channel < 3; ++channel) {
+        low[channel] = histogram.lowest(channel);
+        high[channel] = histogram.highest(channel);
+    }
+    std::cout << "Channel ranges before: red " << low[0] << "-" << high[0] << ", green " << low[1]
+              << "-" << high[1] << ", blue " << low[2] << "-" << high[2] << '\n';
+    // Канал, в котором всего одно значение, растягивать не во что: он
+    // остаётся как есть, иначе деление на ноль.
+    auto stretch = [](int value, int from, int to) {
+        return to > from ? (value - from) * Color::CHANNEL_MAX / (to - from) : value;
+    };
+    for_each_pixel(image_, [&low, &high, stretch](Color c) {
+        return Color::from_rgb(stretch(c.red(), low[0], high[0]),
+                               stretch(c.green(), low[1], high[1]),
+                               stretch(c.blue(), low[2], high[2]));
+    });
+    std::cout << "Levels stretched to 0-255.\n";
 }
 
 void Editor::command_load(const std::vector<std::string>& words) {
@@ -669,6 +763,10 @@ bool Editor::execute(const std::vector<std::string>& words) {
         command_filltest();
     } else if (is_command(name, "minmax")) {
         command_minmax();
+    } else if (is_command(name, "analyze")) {
+        command_analyze(words);
+    } else if (is_command(name, "levels")) {
+        command_levels();
     } else if (is_command(name, "load")) {
         command_load(words);
     } else if (is_command(name, "save")) {

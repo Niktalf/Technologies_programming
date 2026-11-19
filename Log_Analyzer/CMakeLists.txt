@@ -11,6 +11,7 @@ add_library(${PROJECT_NAME}_core
     src/level.cpp
     src/log_book.cpp
     src/log_generator.cpp
+    src/log_insights.cpp
     src/log_parser.cpp
     src/log_record.cpp
     src/log_report.cpp

@@ -87,10 +87,6 @@ public:
     void fill_checker(int cell);
     void fill_stripes(int count);
 
-
-    // Самая тёмная и самая светлая точка. false у пустого изображения.
-    bool min_max(int& darkest, int& brightest) const;
-
     // Заливка области одного цвета, начиная с точки (x, y). Без рекурсии:
     // точки, которые ещё нужно проверить, лежат в собственном стеке.
     FillReport flood_fill(int x, int y, Color color);

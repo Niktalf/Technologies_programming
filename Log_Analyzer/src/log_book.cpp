@@ -1,5 +1,6 @@
 #include "log_book.hpp"
 
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -20,47 +21,42 @@ void LogBook::print_load_report() const {
     }
 }
 
+// Практика 14: сводка без циклов с накопителем. Число записей уровня —
+// count_if (filter + reduce); первая и последняя по времени — minmax_element
+// за один проход. На практике 13 всё это делал один цикл с массивом
+// счётчиков и двумя номерами.
 void LogBook::print_summary() const {
     print_load_report();
     if (records_.empty()) {
         return;
     }
-    long per_level[LEVEL_COUNT] = {};
-    std::size_t first = 0;
-    std::size_t last = 0;
-    for (std::size_t i = 0; i < records_.size(); ++i) {
-        ++per_level[static_cast<int>(records_[i].level())];
-        if (records_[i].is_earlier_than(records_[first])) {
-            first = i;
-        }
-        if (records_[last].is_earlier_than(records_[i])) {
-            last = i;
-        }
-    }
     std::cout << "By level:";
     for (int i = 0; i < LEVEL_COUNT; ++i) {
-        std::cout << ' ' << level_name(static_cast<Level>(i)) << ' ' << per_level[i];
+        Level level = static_cast<Level>(i);
+        long per_level = std::count_if(records_.begin(), records_.end(),
+                                       [level](const LogRecord& r) { return r.level() == level; });
+        std::cout << ' ' << level_name(level) << ' ' << per_level;
     }
-    std::cout << "\nEarliest record: " << records_[first].time().text() << '\n';
-    std::cout << "Latest record:   " << records_[last].time().text() << '\n';
+    Timestamp first;
+    Timestamp last;
+    time_range(first, last);
+    std::cout << "\nEarliest record: " << first.text() << '\n';
+    std::cout << "Latest record:   " << last.text() << '\n';
 }
 
 bool LogBook::time_range(Timestamp& first, Timestamp& last) const {
     if (records_.empty()) {
         return false;
     }
-    // Начальные значения берём из первой записи, а не из нуля и не из
-    // максимума: так проверка работает при любых данных.
-    first = records_[0].time();
-    last = first;
-    for (const LogRecord& record : records_) {
-        if (record.time().is_before(first)) {
-            first = record.time();
-        }
-        if (last.is_before(record.time())) {
-            last = record.time();
-        }
-    }
+    // Самая ранняя и самая поздняя запись одним проходом. Начального
+    // значения у minmax_element нет вовсе: он начинает с первой записи, и
+    // ошибиться с ним, как с нулём в начале поиска минимума, нельзя.
+    auto range = std::minmax_element(records_.begin(), records_.end(),
+                                      [](const LogRecord& a, const LogRecord& b) {
+                                          return a.is_earlier_than(b);
+                                      });
+    first = range.first->time();
+    last = range.second->time();
     return true;
 }
 
