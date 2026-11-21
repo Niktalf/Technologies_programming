@@ -6,35 +6,35 @@
 
 #include "file_reader.hpp"
 
-bool LogParser::parse_line(const std::string& line, std::vector<LogRecord>& records) {
+std::unique_ptr<LogRecord> LogParser::parse_line(const std::string& line) {
     // Ровно три поиска разделителя, а не разбиение по всем чертам подряд:
     // иначе сообщение с чертой внутри потеряет хвост.
     std::size_t first = line.find('|');
     if (first == std::string::npos) {
-        return false;
+        return nullptr;
     }
     std::size_t second = line.find('|', first + 1);
     if (second == std::string::npos) {
-        return false;
+        return nullptr;
     }
     std::size_t third = line.find('|', second + 1);
     if (third == std::string::npos) {
-        return false;
+        return nullptr;
     }
     Level level = Level::info;
     if (!level_from_word(line.substr(first + 1, second - first - 1), level)) {
-        return false;
+        return nullptr;
     }
     // Время и модуль проверяет конструктор записи: неверное время или пустой
     // модуль — std::invalid_argument. Здесь это не авария, а испорченная
-    // строка, и исключение превращается в ответ false.
+    // строка, и исключение превращается в пустой указатель.
     try {
-        records.emplace_back(Timestamp::parse(line.substr(0, first)), level,
-                             line.substr(second + 1, third - second - 1), line.substr(third + 1));
+        return std::make_unique<LogRecord>(Timestamp::parse(line.substr(0, first)), level,
+                                           line.substr(second + 1, third - second - 1),
+                                           line.substr(third + 1));
     } catch (const std::invalid_argument&) {
-        return false;
+        return nullptr;
     }
-    return true;
 }
 
 // Объект reader живёт до конца метода. Как бы метод ни завершился —
@@ -48,8 +48,13 @@ LogBook LogParser::read(const std::string& path) {
     while (reader.read_line(line)) {
         ++lines;
         // Пустая строка — не испорченная запись, её просто пропускаем.
-        if (!line.empty() && !parse_line(line, records)) {
-            ++broken;
+        if (!line.empty()) {
+            std::unique_ptr<LogRecord> record = parse_line(line);
+            if (record) {
+                records.push_back(std::move(*record));   // запись переезжает в вектор
+            } else {
+                ++broken;
+            }
         }
     }
     // Вектор записей перемещается в журнал, журнал возвращается

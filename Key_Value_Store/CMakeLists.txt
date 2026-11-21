@@ -7,14 +7,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(
         ${PROJECT_NAME}_core
+        src/conformance.cpp
         src/console.cpp
+        src/engine.cpp
+        src/journal_engine.cpp
         src/journal_file.cpp
         src/kvstore.cpp
+        src/memory_engine.cpp
         src/parser.cpp
         src/record.cpp
         src/session.cpp
         src/sorted_pairs.cpp
-        src/store.cpp
 )
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 

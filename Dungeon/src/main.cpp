@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -7,6 +8,10 @@
 
 #include "game.hpp"
 
+// Практика 12: герой и монстры — наследники абстрактного класса Creature,
+// монстры трёх видов ходят сами после каждого хода игрока. Опыт 8 в demo —
+// виртуальные вызовы и виртуальный деструктор.
+//
 // Практика 11: поля всех классов закрыты, у каждого класса записан инвариант,
 // отрисовка вынесена из карты в класс MapView. Опыт 7 в demo пробует
 // нарушить инварианты снаружи.
@@ -173,13 +178,64 @@ void try_to_break() {
 
     MonsterList monsters;
     int before = Monster::created_count();
-    monsters.add(2, 2);
+    monsters.add(make_monster('g', 2, 2));
     std::cout << "  a second monster in the same cell: "
-              << (monsters.add(2, 2) ? "added" : "rejected") << '\n';
+              << (monsters.add(make_monster('s', 2, 2)) ? "added" : "rejected") << '\n';
+    std::cout << "  a monster of an unknown kind 'z': "
+              << (monsters.add(make_monster('z', 3, 3)) ? "added" : "rejected") << '\n';
     std::cout << "  hit with damage 100: health left " << monsters.hit(0, 100)
               << ", monsters in the list " << monsters.count() << '\n';
     std::cout << "  monsters created in this experiment: " << Monster::created_count() - before
               << ", total since the start: " << Monster::created_count() << '\n';
+}
+
+// Летучая мышь, которая сообщает о своём создании и разрушении. Нужна
+// только опыту 8: по её сообщениям видно, какие деструкторы вызваны.
+class TracedBat : public Bat {
+public:
+    TracedBat(int x, int y)
+        : Bat(x, y) {
+        std::cout << "  TracedBat created\n";
+    }
+
+    ~TracedBat() override {
+        std::cout << "  ~TracedBat: the destructor of the derived class ran\n";
+    }
+};
+
+// Опыт 8: полиморфизм. Существа разных видов в одном векторе указателей
+// на базовый класс; один цикл, ни одной проверки вида.
+//
+// Виртуальный деструктор. Монстр удаляется через std::unique_ptr<Creature>,
+// то есть через указатель на базу. Потому что ~Creature виртуальный,
+// delete находит деструктор настоящего класса — ~TracedBat, — и тот после
+// себя вызывает деструкторы базовых частей: ~Bat, ~Monster, ~Creature.
+//
+// Уберите virtual у ~Creature (и override у ~TracedBat) и запустите снова.
+// Сообщения ~TracedBat не будет: delete через указатель на Creature вызовет
+// только ~Creature, а всё, что принадлежит наследнику, не освободится.
+// Стандарт называет это неопределённым поведением; санитайзер адресов
+// останавливает программу с ошибкой new-delete-type-mismatch.
+void polymorphism() {
+    std::cout << "8. Creatures of different kinds in one vector of base pointers:\n";
+    int before = Creature::live_count();
+    {
+        std::vector<std::unique_ptr<Creature>> creatures;
+        creatures.push_back(std::make_unique<Hero>(1, 1));
+        creatures.push_back(std::make_unique<Goblin>(2, 1));
+        creatures.push_back(std::make_unique<Skeleton>(3, 1));
+        creatures.push_back(std::make_unique<TracedBat>(4, 1));
+        for (const std::unique_ptr<Creature>& creature : creatures) {
+            // Один и тот же вызов — разный код: решает настоящий тип объекта.
+            std::cout << "  '" << creature->symbol() << "' " << creature->name() << ", health "
+                      << creature->hp() << '\n';
+        }
+        std::cout << "  creatures alive: " << Creature::live_count() - before << '\n';
+        std::cout << "  removing the bat through a pointer to Creature:\n";
+        creatures.pop_back();
+        std::cout << "  creatures alive: " << Creature::live_count() - before << '\n';
+    }   // деструкторы unique_ptr удаляют остальных
+    std::cout << "  after the block: " << Creature::live_count() - before << '\n';
 }
 
 // Опыты со временем жизни. Map::set_trace включает сообщения из конструкторов,
@@ -260,6 +316,8 @@ void demo() {
     Map::set_trace(false);
     std::cout << '\n';
     try_to_break();
+    std::cout << '\n';
+    polymorphism();
 }
 
 } // namespace

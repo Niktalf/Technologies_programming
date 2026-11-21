@@ -96,6 +96,8 @@ void Game::print_commands() {
     std::cout << "  level <file> - load a level; spawn <N> - add monsters\n";
     std::cout << "  hit <N>, on/off/toggle <state>\n";
     std::cout << "  help (h), quit (q)\n";
+    std::cout << "Monsters: g - goblin, chases you; b - bat, flies at random;\n";
+    std::cout << "s - skeleton, stands guard. They move after each of your steps and hits.\n";
 }
 
 // map_ создаётся в списке инициализации: если размер неверный, конструктор
@@ -108,8 +110,8 @@ Game::Game(int width, int height, unsigned int seed)
         // список, генератор — разрушатся сами, и клетки карты освободятся.
         throw std::runtime_error("cannot build a passable level of this size");
     }
-    // Монстры селятся сразу после генерации: rand продолжает ту же
-    // последовательность, что и в версии на C, и монстры встают в те же клетки.
+    // Монстры селятся сразу после генерации. Вид каждого тоже берётся
+    // из rand, поэтому клетки монстров уже не те, что в версии на C.
     spawn_monsters(map_.width() * map_.height() / 100 + 1);
 }
 
@@ -131,35 +133,62 @@ int Game::spawn_monsters(int n) {
         int y = 1 + std::rand() % (map_.height() - 2);
         ++attempts;
         // add сам отказывает, если клетка занята другим монстром.
+        // Вид монстра — случайный; создаёт его make_monster.
         if (map_.tile(x, y) == Map::FLOOR && !(x == hero_.x() && y == hero_.y())
-            && monsters_.add(x, y)) {
+            && monsters_.add(make_monster(random_monster_symbol(), x, y))) {
             ++placed;
         }
     }
     return placed;
 }
 
+bool Game::free_cell(int x, int y) const {
+    return map_.walkable(x, y) && !(x == hero_.x() && y == hero_.y())
+           && monsters_.find(x, y) < 0;
+}
+
+void Game::hit_hero(const Monster& attacker) {
+    hero_.take_damage(attacker.attack());
+    // name() — виртуальный вызов: игра не знает, кто именно её ударил.
+    std::cout << "The " << attacker.name() << " hits the hero for " << attacker.attack()
+              << ". Health: " << hero_.hp() << " / " << hero_.hp_max() << '\n';
+}
+
+bool Game::end_turn() {
+    ++turns_;
+    hero_.act(*this);
+    // Каждое существо делает свой ход через виртуальный вызов. Ни одной
+    // проверки вида монстра: новый вид не потребует менять эту функцию.
+    monsters_.act_all(*this);
+    if (!hero_.alive()) {
+        std::cout << "The hero is dead.\n";
+        return false;
+    }
+    return true;
+}
+
 // Шаг героя. Монстр в клетке назначения загораживает путь.
-void Game::command_move(Hero::Direction direction) {
+bool Game::command_move(Hero::Direction direction) {
     int tx = 0;
     int ty = 0;
     hero_.target(direction, tx, ty);
     if (monsters_.find(tx, ty) >= 0) {
         std::cout << "A monster blocks the way. Attack: attack <where>\n";
-        return;
+        return true;
     }
     if (!hero_.move(direction, map_)) {
         std::cout << "There is a wall.\n";
-        return;
+        return true;
     }
-    ++turns_;
+    bool alive = end_turn();
     draw();
+    return alive;
 }
 
-void Game::command_attack(std::string* argument) {
+bool Game::command_attack(std::string* argument) {
     Hero::Direction direction = Hero::Direction::north;
     if (!direction_argument(argument, "attack", direction)) {
-        return;
+        return true;
     }
     int tx = 0;
     int ty = 0;
@@ -167,17 +196,20 @@ void Game::command_attack(std::string* argument) {
     int index = monsters_.find(tx, ty);
     if (index < 0) {
         std::cout << "Nobody there.\n";
-        return;
+        return true;
     }
-    ++turns_;
+    // Имя — до удара: погибший монстр будет уже удалён из списка.
+    std::string name = monsters_.at(index).name();
     // Удар и уборка мёртвого — одним методом списка: игра не может забыть
     // убрать мёртвого монстра, потому что убирает не она.
     int left = monsters_.hit(index, hero_.attack());
     if (left > 0) {
-        std::cout << "Hit! The monster has " << left << " health left.\n";
-        return;
+        std::cout << "Hit! The " << name << " has " << left << " health left.\n";
+    } else {
+        std::cout << "The " << name << " is defeated. Monsters left: " << monsters_.count()
+                  << '\n';
     }
-    std::cout << "The monster is defeated. Monsters left: " << monsters_.count() << '\n';
+    return end_turn();
 }
 
 void Game::command_cell() const {
@@ -294,13 +326,13 @@ bool Game::execute(std::vector<std::string>& words) {
     std::string* argument = words.size() > 1 ? &words[1] : nullptr;
     Hero::Direction direction = Hero::Direction::north;
     if (direction_from_word(name, direction)) {
-        command_move(direction);
+        return command_move(direction);
     } else if (name == "go") {
         if (direction_argument(argument, "go", direction)) {
-            command_move(direction);
+            return command_move(direction);
         }
     } else if (is_command(name, "attack", "a")) {
-        command_attack(argument);
+        return command_attack(argument);
     } else if (is_command(name, "look", "l")) {
         draw();
     } else if (is_command(name, "monsters", "m")) {

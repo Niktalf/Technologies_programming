@@ -1,8 +1,10 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "filter.hpp"
 #include "image.hpp"
 #include "ppm_file.hpp"
 
@@ -47,6 +49,9 @@ private:
     void command_gen(const std::vector<std::string>& words);
     void command_invert();
     void command_bright(const std::vector<std::string>& words);
+    void command_single_filter(const std::vector<std::string>& words);
+    void command_filters(const std::vector<std::string>& words);
+    void apply_chain(const std::vector<std::unique_ptr<Filter>>& chain);
     void command_crop(const std::vector<std::string>& words);
     void command_rotate(const std::vector<std::string>& words);
     void command_scale(const std::vector<std::string>& words);

@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "conformance.hpp"
+#include "journal_engine.hpp"
 #include "parser.hpp"
 #include "sorted_pairs.hpp"
 
@@ -51,8 +53,7 @@ void print_bytes(const std::vector<std::uint8_t>& bytes) {
 Console::Console(const std::string& first, const std::string& second)
     : session_(first, second) {
     for (int i = 0; i < Session::STORES; ++i) {
-        Store& store = i == 0 ? session_.current() : session_.other();
-        if (store.recovered_broken() > 0) {
+        if (session_.is_open(i) && session_.store(i).repaired()) {
             std::cout << "Journal " << session_.path(i)
                       << " had a damaged tail - it was cut off, whole records are kept.\n";
         }
@@ -80,6 +81,7 @@ void Console::print_help() {
               << "  record <key> <val>   - build a journal record and check it\n"
               << "  demo                 - an exception, a move, the invariant\n"
               << "  stress [n]           - open and close a database n times\n"
+              << "  conform              - run the same checks on both engines\n"
               << "  help                 - this list\n"
               << "  quit                 - exit\n";
 }
@@ -172,11 +174,10 @@ Console::Result Console::command_range(const std::vector<std::string>& words) {
 }
 
 Console::Result Console::command_stats() {
-    const Store& store = session_.current();
-    std::cout << "Keys: " << store.size() << '\n';
-    std::cout << "Journal records: " << store.journal_records()
-              << ", obsolete among them: " << store.journal_garbage() << '\n';
-    std::cout << "Discarded as damaged on open: " << store.recovered_broken() << '\n';
+    // Подробности устройства каждый движок описывает сам: describe —
+    // виртуальный вызов. Консоль не спрашивает, журнальный ли это движок.
+    const Engine& store = session_.current();
+    std::cout << "Keys: " << store.size() << '\n' << store.describe();
     return Result::ok;
 }
 
@@ -185,7 +186,7 @@ Console::Result Console::command_copy(const std::vector<std::string>& words) {
         std::cout << "copy needs a key\n";
         return Result::error;
     }
-    if (!session_.other().is_open()) {
+    if (!session_.other_open()) {
         std::cout << "The other store is closed\n";
         return Result::error;
     }
@@ -205,8 +206,7 @@ Console::Result Console::command_copy(const std::vector<std::string>& words) {
 Console::Result Console::command_close() {
     std::size_t count = session_.current().size();
     session_.close_current();
-    std::cout << "Store " << session_.number() << " closed, pairs freed: " << count
-              << ". Journal " << session_.path(session_.number() - 1) << " stays on disk.\n";
+    std::cout << "Store " << session_.number() << " closed, pairs freed: " << count << ".\n";
     return Result::ok;
 }
 
@@ -220,16 +220,16 @@ Console::Result Console::command_use(const std::vector<std::string>& words) {
         std::cout << "The store number is from 1 to " << Session::STORES << '\n';
         return Result::error;
     }
-    std::cout << "Selected store " << session_.number() << ", journal "
+    std::cout << "Selected store " << session_.number() << ", database "
               << session_.path(session_.number() - 1) << ", "
-              << (session_.current().is_open() ? "open" : "closed") << '\n';
+              << (session_.current_open() ? "open" : "closed") << '\n';
     return Result::ok;
 }
 
 Console::Result Console::command_which() {
-    std::cout << "Current store: " << session_.number() << ", journal "
+    std::cout << "Current store: " << session_.number() << ", database "
               << session_.path(session_.number() - 1) << ", ";
-    if (session_.current().is_open()) {
+    if (session_.current_open()) {
         std::cout << "keys: " << session_.current().size() << '\n';
     } else {
         std::cout << "closed\n";
@@ -247,9 +247,9 @@ Console::Result Console::command_open(const std::vector<std::string>& words) {
     } catch (const KvError& error) {
         return report(error.status());
     }
-    const Store& store = session_.current();
-    std::cout << "Journal opened " << words[1] << ": keys " << store.size()
-              << ", damaged records discarded " << store.recovered_broken() << '\n';
+    const Engine& store = session_.current();
+    std::cout << "Opened " << words[1] << ", keys " << store.size()
+              << (store.repaired() ? ", the damaged tail was discarded" : "") << '\n';
     return Result::ok;
 }
 
@@ -381,12 +381,12 @@ Console::Result Console::command_record(const std::vector<std::string>& words) {
 Console::Result Console::command_demo() {
     const std::string path = "demo.tmp.db";
     std::remove(path.c_str());
-    Store::set_trace(true);
+    JournalEngine::set_trace(true);
     JournalFile::set_trace(true);
 
     std::cout << "1. Store two keys and throw an exception:\n";
     try {
-        Store store(path);
+        JournalEngine store(path);
         bool existed = false;
         store.put("a", "1", existed);
         store.put("b", "2", existed);
@@ -401,7 +401,7 @@ Console::Result Console::command_demo() {
     std::cout << "2. Reopen the database - the keys are there, every record went\n"
               << "   to the journal before the exception:\n";
     {
-        Store store(path);
+        JournalEngine store(path);
         SortedPairs sorted;
         sorted.build(store);
         sorted.print_all();
@@ -409,7 +409,7 @@ Console::Result Console::command_demo() {
 
     std::cout << "\n3. A journal that cannot be opened - no object at all:\n";
     try {
-        Store store("/no/such/directory/x.db");
+        JournalEngine store("/no/such/directory/x.db");
         std::cout << "  this line is never printed\n";
     } catch (const KvError& error) {
         std::cout << "  caught: " << error.what() << '\n';
@@ -417,14 +417,14 @@ Console::Result Console::command_demo() {
 
     std::cout << "\n4. Moving a store: the journal changes owner and is closed once:\n";
     {
-        Store first(path);
-        Store second = std::move(first);
+        JournalEngine first(path);
+        JournalEngine second = std::move(first);
         std::cout << "  after the move: the source is "
                   << (first.is_open() ? "open" : "closed") << ", open journals "
                   << JournalFile::open_count() << '\n';
     }
 
-    Store::set_trace(false);
+    JournalEngine::set_trace(false);
     JournalFile::set_trace(false);
     std::remove(path.c_str());
     std::cout << '\n';
@@ -459,7 +459,7 @@ void Console::try_to_break() {
     }
     // Проверка инварианта — через внутренний класс: клиенту счётчики журнала
     // не видны, а консоли видны.
-    Store reopened(path);
+    JournalEngine reopened(path);
     std::cout << "  after reopening: keys " << reopened.size() << ", journal records "
               << reopened.journal_records() << ", obsolete " << reopened.journal_garbage()
               << " - " << (reopened.journal_records()
@@ -488,6 +488,25 @@ long count_open_descriptors() {
 
 } // namespace
 
+// Один и тот же набор проверок на обоих движках. Движки создаёт
+// make_engine — так же, как для сессии; дальше run_conformance видит только
+// Engine&.
+Console::Result Console::command_conform() {
+    const std::string path = "conform.tmp.db";
+    const std::string locations[] = { KvStore::IN_MEMORY, path };
+    int failures = 0;
+    for (const std::string& location : locations) {
+        std::remove(path.c_str());
+        std::unique_ptr<Engine> engine = make_engine(location);
+        std::cout << "Engine for " << location << ":\n";
+        failures += run_conformance(*engine);
+    }
+    std::remove(path.c_str());
+    std::cout << (failures == 0 ? "All checks passed on both engines.\n"
+                                : "Some checks failed.\n");
+    return failures == 0 ? Result::ok : Result::error;
+}
+
 // Циклы открытия и закрытия базы: на каждом круге журнал открывает
 // конструктор и закрывает деструктор.
 Console::Result Console::command_stress(const std::vector<std::string>& words) {
@@ -501,13 +520,13 @@ Console::Result Console::command_stress(const std::vector<std::string>& words) {
     int journals_before = JournalFile::open_count();   // журналы самой консоли уже открыты
     std::remove(path.c_str());
     for (long i = 0; i < times; ++i) {
-        Store store(path);   // открыли
+        JournalEngine store(path);   // открыли
         bool existed = false;
         store.put("cycle", std::to_string(i), existed);
     }                        // закрыли — деструктором, на каждом круге
     long after = count_open_descriptors();
     {
-        Store store(path);
+        JournalEngine store(path);
         std::string value;
         store.get("cycle", value);
         std::cout << "Databases opened and closed: " << times << ", journal records: "
@@ -605,8 +624,11 @@ Console::Result Console::dispatch(const std::vector<std::string>& words) {
     if (name == "stress") {
         return command_stress(words);
     }
+    if (name == "conform") {
+        return command_conform();
+    }
     // Всё остальное работает с данными и требует открытого хранилища.
-    if (!session_.current().is_open()) {
+    if (!session_.current_open()) {
         std::cout << "Store " << session_.number() << " is closed. Open it: open <file>\n";
         return Result::error;
     }
@@ -614,7 +636,7 @@ Console::Result Console::dispatch(const std::vector<std::string>& words) {
 }
 
 void Console::run_interactive() {
-    std::cout << "Key-value store. Journals: " << session_.path(0) << " and "
+    std::cout << "Key-value store. Databases: " << session_.path(0) << " and "
               << session_.path(1) << ".\n";
     std::cout << "Type help for the list of commands.\n";
     // Конец ввода и команда quit сводятся к одному флагу: у цикла одно

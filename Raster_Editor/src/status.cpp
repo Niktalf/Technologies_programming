@@ -1,4 +1,4 @@
-#include "../../../../../Technologies_programming/Raster_Editor/include/status.hpp"
+#include "status.hpp"
 
 const char* status_text(ImageStatus status) {
     switch (status) {

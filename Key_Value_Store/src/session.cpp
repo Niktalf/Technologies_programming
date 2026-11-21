@@ -3,22 +3,20 @@
 Session::Session(const std::string& first, const std::string& second)
     : paths_{ first, second } {
     for (int i = 0; i < STORES; ++i) {
-        // Временный открытый Store перемещается на место пустого.
-        stores_[i] = Store(paths_[i]);
+        // Движок выбирает make_engine — единственное место, где это решается.
+        stores_[i] = make_engine(paths_[i]);
     }
 }
 
 void Session::close_current() {
-    // Перемещающее присваивание пустого хранилища: поле journal_ прежнего
-    // закрывает свой файл, таблица освобождается.
-    stores_[current_] = Store();
+    stores_[current_].reset();   // движок удаляется, журнал закрывается
 }
 
-void Session::open_current(const std::string& path) {
-    // Сначала новое хранилище, потом присваивание. Если конструктор бросит
+void Session::open_current(const std::string& location) {
+    // Сначала новый движок, потом присваивание. Если make_engine бросит
     // исключение, присваивания не будет, и текущее останется прежним.
-    stores_[current_] = Store(path);
-    paths_[current_] = path;
+    stores_[current_] = make_engine(location);
+    paths_[current_] = location;
 }
 
 bool Session::select(int number) {

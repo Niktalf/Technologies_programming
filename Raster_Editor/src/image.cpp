@@ -1,4 +1,4 @@
-#include "../../../../../Technologies_programming/Raster_Editor/include/image.hpp"
+#include "image.hpp"
 
 #include <algorithm>
 #include <iostream>
@@ -200,18 +200,6 @@ void Image::fill_stripes(int count) {
         for (int x = 0; x < width_; ++x) {
             set_pixel(x, y, Color::from_rgb(c[0], c[1], c[2]));
         }
-    }
-}
-
-void Image::invert() {
-    for (int i = 0; i < width_ * height_; ++i) {
-        pixels_[i] = pixels_[i].inverted();
-    }
-}
-
-void Image::brighten(int delta) {
-    for (int i = 0; i < width_ * height_; ++i) {
-        pixels_[i].brighten(delta);   // метод меняет сам элемент массива, а не копию
     }
 }
 

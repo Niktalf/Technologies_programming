@@ -4,7 +4,7 @@
 #include <iostream>
 #include <utility>
 
-#include "store.hpp"
+#include "kvstore.hpp"
 
 bool JournalFile::trace_ = false;
 int JournalFile::open_count_ = 0;

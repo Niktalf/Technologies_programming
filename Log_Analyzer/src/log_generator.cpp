@@ -2,7 +2,7 @@
 
 #include <cstdlib>
 #include <fstream>
-#include <iomanip>
+#include <string>
 
 namespace {
 
@@ -37,6 +37,23 @@ Level LogGenerator::random_level() {
     return Level::fatal;
 }
 
+LogRecord LogGenerator::make_record(long number) {
+    const int module_count = static_cast<int>(sizeof MODULES / sizeof MODULES[0]);
+    const int message_count = static_cast<int>(sizeof MESSAGES / sizeof MESSAGES[0]);
+    // Каждое случайное значение берётся отдельной инструкцией: порядок
+    // вычисления частей одного выражения не определён, а так файл
+    // с тем же зерном совпадает на любом компиляторе.
+    int day = 1 + std::rand() % 28;
+    int hour = std::rand() % 24;
+    int minute = std::rand() % 60;
+    int second = std::rand() % 60;
+    Level level = random_level();
+    const char* module = MODULES[std::rand() % module_count];
+    const char* message = MESSAGES[std::rand() % message_count];
+    return LogRecord(Timestamp::from_parts(2026, 3, day, hour, minute, second), level, module,
+                     std::string(message) + " #" + std::to_string(number));
+}
+
 LogStatus LogGenerator::write(const std::string& path, long lines, unsigned int seed) const {
     if (lines < 0) {
         return LogStatus::bad_argument;
@@ -46,23 +63,10 @@ LogStatus LogGenerator::write(const std::string& path, long lines, unsigned int 
         return LogStatus::cannot_open;
     }
     std::srand(seed);
-    const int module_count = static_cast<int>(sizeof MODULES / sizeof MODULES[0]);
-    const int message_count = static_cast<int>(sizeof MESSAGES / sizeof MESSAGES[0]);
-    file << std::setfill('0');
     for (long i = 0; i < lines && file; ++i) {
-        // Каждое случайное значение берётся отдельной инструкцией: порядок
-        // вычисления частей одного выражения не определён, а так файл
-        // с тем же зерном совпадает на любом компиляторе.
-        int day = 1 + std::rand() % 28;
-        int hour = std::rand() % 24;
-        int minute = std::rand() % 60;
-        int second = std::rand() % 60;
-        Level level = random_level();
-        const char* module = MODULES[std::rand() % module_count];
-        const char* message = MESSAGES[std::rand() % message_count];
-        file << "2026-03-" << std::setw(2) << day << ' ' << std::setw(2) << hour << ':'
-             << std::setw(2) << minute << ':' << std::setw(2) << second << '|'
-             << level_name(level) << '|' << module << '|' << message << " #" << i + 1 << '\n';
+        LogRecord record = make_record(i + 1);
+        file << record.time().text() << '|' << level_name(record.level()) << '|'
+             << record.module() << '|' << record.text() << '\n';
     }
     // Часть ошибок записи видна только при закрытии: данные из буфера
     // уходят на диск именно тогда.

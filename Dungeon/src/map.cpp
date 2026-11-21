@@ -111,9 +111,10 @@ Map::Map(const std::string& path, MonsterList& monsters)
                 ++heroes;
                 start_x_ = static_cast<int>(x);
                 start_y_ = static_cast<int>(y);
-            } else if (c == 'M') {
-                found.add(static_cast<int>(x), static_cast<int>(y));
-            } else if (!is_tile(c)) {
+            } else if (!is_tile(c)
+                       && !found.add(make_monster(c, static_cast<int>(x), static_cast<int>(y)))) {
+                // Не клетка и не монстр: make_monster вернул пустой указатель,
+                // и add его не принял.
                 throw LevelError(LoadStatus::bad_format, static_cast<int>(y) + 1);
             }
         }
@@ -129,7 +130,7 @@ Map::Map(const std::string& path, MonsterList& monsters)
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             char c = rows[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
-            cells_[index(x, y)] = c == '@' || c == 'M' ? FLOOR : c;
+            cells_[index(x, y)] = is_tile(c) ? c : FLOOR;   // под героем и монстрами пол
         }
     }
     // Вектор монстров переезжает в список вызывающего: std::move разрешает

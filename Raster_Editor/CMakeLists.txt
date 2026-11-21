@@ -9,16 +9,15 @@ add_library(
         ${PROJECT_NAME}_core
         src/color.cpp
         src/editor.cpp
+        src/filter.cpp
         src/image.cpp
         src/ppm_file.cpp
         src/status.cpp
 )
-
 target_include_directories(${PROJECT_NAME}_core PUBLIC include)
 
 add_executable(
         ${PROJECT_NAME}
         src/main.cpp
 )
-
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)

@@ -91,6 +91,10 @@ void Editor::print_help() {
               << "  gen stripes [count]      - color stripes, 8 by default\n"
               << "  invert                   - invert\n"
               << "  bright <number>          - brightness, e.g. bright 40 or bright -40\n"
+              << "  gray                     - shades of gray\n"
+              << "  contrast <percent>       - contrast, 100 keeps the image as is\n"
+              << "  blur                     - blur, each point is the mean of a 3 x 3 square\n"
+              << "  filters <f1> <f2> ...    - a chain of filters, e.g. filters gray blur\n"
               << "  size <w> <h>             - create an empty image\n"
               << "  crop <x> <y> <w> <h>     - crop\n"
               << "  scale <w> <h>            - resize\n"
@@ -191,9 +195,11 @@ void Editor::command_gen(const std::vector<std::string>& words) {
     std::cout << "Image created " << image_.width() << " x " << image_.height() << ".\n";
 }
 
+// Практика 12: invert и bright — тоже фильтры. Команда создаёт объект
+// фильтра и применяет его; на практике 11 это делали методы Image.
 void Editor::command_invert() {
     if (require_image()) {
-        image_.invert();
+        InvertFilter().apply(image_);
         std::cout << "Inverted.\n";
     }
 }
@@ -215,8 +221,68 @@ void Editor::command_bright(const std::vector<std::string>& words) {
         std::cout << "Not a number: " << words[1] << ". Example: bright 40 or bright -40\n";
         return;
     }
-    image_.brighten(delta);
+    BrightnessFilter(delta).apply(image_);
     std::cout << "Brightness changed by " << delta << ".\n";
+}
+
+// Цепочка фильтров: «filters gray contrast 150 blur». Сначала строятся все
+// фильтры — если хоть один задан неверно, к изображению не применяется
+// ни один. Потом один цикл применяет их по очереди.
+void Editor::command_filters(const std::vector<std::string>& words) {
+    if (words.size() < 2) {
+        std::cout << "Filters: " << filter_names() << '\n'
+                  << "Example: filters gray contrast 150 blur\n";
+        return;
+    }
+    if (!require_image()) {
+        return;
+    }
+    // Вектор указателей на базовый класс. По значению фильтры здесь не лежат:
+    // std::vector<Filter> не соберётся — Filter абстрактный, — а будь он
+    // обычным классом, от каждого наследника осталась бы только часть Filter.
+    std::vector<std::unique_ptr<Filter>> chain;
+    std::size_t position = 1;
+    while (position < words.size()) {
+        std::unique_ptr<Filter> filter = make_filter(words, position);
+        if (!filter) {
+            std::cout << "Nothing applied.\n";
+            return;
+        }
+        chain.push_back(std::move(filter));
+    }
+    apply_chain(chain);
+}
+
+// Один цикл на все фильтры: ни одной проверки, какой фильтр какой.
+void Editor::apply_chain(const std::vector<std::unique_ptr<Filter>>& chain) {
+    int width = image_.width();
+    int height = image_.height();
+    for (const std::unique_ptr<Filter>& filter : chain) {
+        filter->apply(image_);   // виртуальный вызов: код выбирает тип объекта
+        std::cout << "Applied: " << filter->name() << '\n';
+    }
+    // Договор фильтра: размер не меняется. Здесь на него и рассчитывают.
+    std::cout << "Filters applied: " << chain.size() << ", size still " << width << " x "
+              << height << '\n';
+}
+
+// Одиночные фильтры — та же цепочка из одного звена.
+void Editor::command_single_filter(const std::vector<std::string>& words) {
+    if (!require_image()) {
+        return;
+    }
+    std::size_t position = 0;
+    std::unique_ptr<Filter> filter = make_filter(words, position);
+    if (!filter) {
+        return;
+    }
+    if (position != words.size()) {
+        std::cout << "Too many arguments for " << words[0] << '\n';
+        return;
+    }
+    std::vector<std::unique_ptr<Filter>> chain;
+    chain.push_back(std::move(filter));
+    apply_chain(chain);
 }
 
 void Editor::command_crop(const std::vector<std::string>& words) {
@@ -581,6 +647,11 @@ bool Editor::execute(const std::vector<std::string>& words) {
         command_invert();
     } else if (is_command(name, "bright")) {
         command_bright(words);
+    } else if (is_command(name, "gray") || is_command(name, "contrast")
+               || is_command(name, "blur")) {
+        command_single_filter(words);
+    } else if (is_command(name, "filters")) {
+        command_filters(words);
     } else if (is_command(name, "size")) {
         command_size(words);
     } else if (is_command(name, "crop")) {
