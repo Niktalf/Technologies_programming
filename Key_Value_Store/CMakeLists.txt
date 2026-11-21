@@ -9,6 +9,7 @@ add_library(
         ${PROJECT_NAME}_core
         src/console.cpp
         src/journal_file.cpp
+        src/kvstore.cpp
         src/parser.cpp
         src/record.cpp
         src/session.cpp
@@ -24,7 +25,13 @@ add_executable(
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
 
 add_executable(
-        ${PROJECT_NAME}_demo
+        ${PROJECT_NAME}_phonebook
         demo/phonebook.cpp
 )
-target_link_libraries(${PROJECT_NAME}_demo PRIVATE ${PROJECT_NAME}_core)
+target_link_libraries(${PROJECT_NAME}_phonebook PRIVATE ${PROJECT_NAME}_core)
+
+add_executable(
+        ${PROJECT_NAME}_visits
+        demo/visits.cpp
+)
+target_link_libraries(${PROJECT_NAME}_visits PRIVATE ${PROJECT_NAME}_core)

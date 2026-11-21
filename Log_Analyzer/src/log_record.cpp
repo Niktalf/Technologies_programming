@@ -2,42 +2,29 @@
 
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
+#include <utility>
 
-bool LogRecord::parse(const std::string& line) {
-    // Ровно три поиска разделителя, а не разбиение по всем чертам подряд:
-    // иначе сообщение с чертой внутри потеряет хвост.
-    std::size_t first = line.find('|');
-    if (first == std::string::npos) {
-        return false;
+// Проверки — в конструкторе, а не у вызывающего: мест, где создаются
+// записи, несколько (текстовый журнал, двоичный, генератор, опыты), а
+// конструктор один. Забыть проверку в одном из мест теперь нельзя.
+//
+// Строки приняты по значению и перемещены в поля: вызывающий, которому
+// строка больше не нужна, отдаёт её без копирования.
+LogRecord::LogRecord(Timestamp time, Level level, std::string module, std::string text)
+    : time_(time), level_(level), module_(std::move(module)), text_(std::move(text)) {
+    if (!time_.valid()) {
+        throw std::invalid_argument("invalid time");
     }
-    std::size_t second = line.find('|', first + 1);
-    if (second == std::string::npos) {
-        return false;
+    // enum class не даст случайно записать число в уровень, но static_cast
+    // даст: static_cast<Level>(7). Такой уровень не напечатать и не посчитать.
+    int number = static_cast<int>(level_);
+    if (number < 0 || number >= LEVEL_COUNT) {
+        throw std::invalid_argument("unknown level");
     }
-    std::size_t third = line.find('|', second + 1);
-    if (third == std::string::npos) {
-        return false;
+    if (module_.empty()) {
+        throw std::invalid_argument("empty module");
     }
-    Level level = Level::info;
-    if (!level_from_word(line.substr(first + 1, second - first - 1), level)) {
-        return false;
-    }
-    return assign(Timestamp::parse(line.substr(0, first)), level,
-                  line.substr(second + 1, third - second - 1), line.substr(third + 1));
-}
-
-bool LogRecord::assign(Timestamp time, Level level, const std::string& module,
-                       const std::string& text) {
-    if (!time.valid() || module.empty()) {
-        return false;
-    }
-    // Поля меняются, только когда всё проверено: неудачный разбор
-    // не оставляет запись наполовину заполненной.
-    time_ = time;
-    level_ = level;
-    module_ = module;
-    text_ = text;
-    return true;
 }
 
 void LogRecord::print() const {

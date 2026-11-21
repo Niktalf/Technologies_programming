@@ -78,7 +78,7 @@ void Console::print_help() {
               << "  script <file> [stop] - run commands from a file\n"
               << "  genscript <file> <n> - write a script of n put commands\n"
               << "  record <key> <val>   - build a journal record and check it\n"
-              << "  demo                 - an exception in the middle of work with a database\n"
+              << "  demo                 - an exception, a move, the invariant\n"
               << "  stress [n]           - open and close a database n times\n"
               << "  help                 - this list\n"
               << "  quit                 - exit\n";
@@ -87,7 +87,7 @@ void Console::print_help() {
 // Печатает ошибку хранилища. «Ключ не найден» — ответ, а не ошибка:
 // скрипт из-за него не прерывается.
 Console::Result Console::report(KvStatus status) const {
-    std::cout << "Error: " << Store::status_text(status) << '\n';
+    std::cout << "Error: " << status_text(status) << '\n';
     return status == KvStatus::not_found ? Result::ok : Result::error;
 }
 
@@ -381,8 +381,8 @@ Console::Result Console::command_record(const std::vector<std::string>& words) {
 Console::Result Console::command_demo() {
     const std::string path = "demo.tmp.db";
     std::remove(path.c_str());
-    Store::trace = true;
-    JournalFile::trace = true;
+    Store::set_trace(true);
+    JournalFile::set_trace(true);
 
     std::cout << "1. Store two keys and throw an exception:\n";
     try {
@@ -424,10 +424,49 @@ Console::Result Console::command_demo() {
                   << JournalFile::open_count() << '\n';
     }
 
-    Store::trace = false;
-    JournalFile::trace = false;
+    Store::set_trace(false);
+    JournalFile::set_trace(false);
     std::remove(path.c_str());
+    std::cout << '\n';
+    try_to_break();
     return Result::ok;
+}
+
+// Практика 11: попытки нарушить инвариант через публичный интерфейс KvStore —
+// тот, что видят клиенты. Каждая отвергнута, а связь таблицы с журналом
+// (записей = ключей + ненужных) после всех попыток сходится.
+void Console::try_to_break() {
+    const std::string path = "demo.tmp.db";
+    std::remove(path.c_str());
+    std::cout << "5. Trying to break the invariant through the public interface:\n";
+    {
+        KvStore store(path);
+        store.put("a", "1");
+        store.put("a", "2");
+        store.put("b", "3");
+        store.remove("b");
+        std::cout << "  empty key: " << status_text(store.put("", "x")) << '\n';
+        std::string long_value(KvStore::VALUE_MAX + 1, 'v');
+        std::cout << "  value of " << long_value.size() << " bytes: "
+                  << status_text(store.put("c", long_value)) << '\n';
+        std::cout << "  removing a missing key: " << status_text(store.remove("zz")) << '\n';
+        KvStore moved = std::move(store);
+        // Нарочно: объект после перемещения жив, и его операции должны
+        // честно отказывать, а не обращаться к чужой базе.
+        std::cout << "  put into the moved-from object: " << status_text(store.put("d", "4"))
+                  << '\n';
+        std::cout << "  pairs in the store: " << moved.size() << '\n';
+    }
+    // Проверка инварианта — через внутренний класс: клиенту счётчики журнала
+    // не видны, а консоли видны.
+    Store reopened(path);
+    std::cout << "  after reopening: keys " << reopened.size() << ", journal records "
+              << reopened.journal_records() << ", obsolete " << reopened.journal_garbage()
+              << " - " << (reopened.journal_records()
+                           == static_cast<long>(reopened.size()) + reopened.journal_garbage()
+                           ? "the invariant holds" : "the invariant is broken!")
+              << '\n';
+    std::remove(path.c_str());
 }
 
 namespace {

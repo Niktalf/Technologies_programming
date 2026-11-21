@@ -1,52 +1,11 @@
 #include "log_book.hpp"
 
 #include <cctype>
-#include <cstring>
-#include <fstream>
 #include <iostream>
 #include <stdexcept>
-
-#include "file_reader.hpp"
+#include <utility>
 
 namespace {
-
-// Двоичный формат практики 8: сигнатура, версия, число записей, затем
-// записи. Числа — младшим байтом вперёд, чтобы файл одинаково читался
-// на любой машине.
-const char BINARY_SIGNATURE[4] = { 'L', 'O', 'G', 'B' };
-constexpr unsigned long long BINARY_VERSION = 1;
-constexpr unsigned long long BINARY_TEXT_LIMIT = 65536;
-constexpr unsigned long long BINARY_COUNT_LIMIT = 50000000;
-constexpr unsigned long long BINARY_MODULE_LIMIT = 31;
-
-// Пишет число size байтами, младшим вперёд.
-void write_number(std::ostream& file, unsigned long long value, int size) {
-    for (int i = 0; i < size; ++i) {
-        file.put(static_cast<char>((value >> (8 * i)) & 0xFFu));
-    }
-}
-
-// Читает число из size байтов, младшим вперёд. false, если файл кончился.
-bool read_number(std::istream& file, unsigned long long& out, int size) {
-    unsigned char bytes[8];
-    if (!file.read(reinterpret_cast<char*>(bytes), size)) {
-        return false;
-    }
-    out = 0;
-    for (int i = 0; i < size; ++i) {
-        out |= static_cast<unsigned long long>(bytes[i]) << (8 * i);
-    }
-    return true;
-}
-
-// Читает length байтов в строку. false, если файл кончился раньше.
-bool read_text(std::istream& file, std::string& out, unsigned long long length) {
-    out.assign(static_cast<std::size_t>(length), '\0');
-    if (length == 0) {
-        return true;
-    }
-    return static_cast<bool>(file.read(&out[0], static_cast<std::streamsize>(length)));
-}
 
 bool same_char(char a, char b) {
     return std::tolower(static_cast<unsigned char>(a))
@@ -82,131 +41,12 @@ bool same_word_ignore_case(const std::string& a, const std::string& b) {
 
 } // namespace
 
-// Объект reader живёт до конца конструктора. Как бы конструктор
-// ни завершился — дочитав файл или исключением, — деструктор reader
-// закроет файл.
-LogBook::LogBook(const std::string& path)
-    : path_(path), loaded_(true) {
-    FileReader reader(path);
-    std::string line;
-    while (reader.read_line(line)) {
-        ++lines_;
-        // Пустая строка — не испорченная запись, её просто пропускаем.
-        if (!line.empty()) {
-            LogRecord record;
-            if (record.parse(line)) {
-                records_.push_back(record);
-            } else {
-                ++broken_;
-            }
-        }
+LogBook::LogBook(std::string path, std::vector<LogRecord> records, long lines, long broken)
+    : records_(std::move(records)), path_(std::move(path)), lines_(lines), broken_(broken),
+      loaded_(true) {
+    if (broken_ < 0 || count() + broken_ > lines_) {
+        throw std::invalid_argument("the line counts do not add up");
     }
-}   // здесь деструктор reader закрывает файл; журнал живёт дальше
-
-void LogBook::read_until_failure(const std::string& path, long fail_at) {
-    FileReader reader(path);
-    std::string line;
-    long number = 0;
-    while (reader.read_line(line)) {
-        ++number;
-        if (number == fail_at) {
-            std::cout << "  throwing an exception at line " << number << '\n';
-            // Выход из функции посреди чтения. В версии на C здесь нужно
-            // было бы не забыть fclose; здесь его нет — и он не нужен.
-            throw std::runtime_error("error at line " + std::to_string(number));
-        }
-    }
-}
-
-LogStatus LogBook::save_binary(const std::string& path) const {
-    // Двоичный режим обязателен: в текстовом байты, совпадающие с кодом
-    // перевода строки, на части систем портятся.
-    std::ofstream file(path, std::ios::binary);
-    if (!file) {
-        return LogStatus::cannot_open;
-    }
-    file.write(BINARY_SIGNATURE, 4);
-    write_number(file, BINARY_VERSION, 2);
-    write_number(file, static_cast<unsigned long long>(records_.size()), 8);
-    for (std::size_t i = 0; i < records_.size() && file; ++i) {
-        const LogRecord& r = records_[i];
-        write_number(file, static_cast<unsigned long long>(r.time().value()), 8);
-        write_number(file, static_cast<unsigned long long>(r.level()), 1);
-        write_number(file, r.module().size(), 1);
-        file.write(r.module().data(), static_cast<std::streamsize>(r.module().size()));
-        write_number(file, r.text().size(), 4);
-        file.write(r.text().data(), static_cast<std::streamsize>(r.text().size()));
-    }
-    // Часть ошибок записи видна только при закрытии файла.
-    file.close();
-    return file ? LogStatus::ok : LogStatus::write_failed;
-}
-
-// Длинам из файла не доверяем: каждая проверяется до чтения по ней.
-LogStatus LogBook::read_binary_record(std::istream& file, LogRecord& record) {
-    unsigned long long time = 0;
-    unsigned long long level = 0;
-    unsigned long long module_length = 0;
-    if (!read_number(file, time, 8) || !read_number(file, level, 1)
-        || !read_number(file, module_length, 1)) {
-        return LogStatus::corrupt;
-    }
-    if (level >= LEVEL_COUNT || module_length == 0 || module_length > BINARY_MODULE_LIMIT) {
-        return LogStatus::corrupt;
-    }
-    std::string module;
-    unsigned long long text_length = 0;
-    if (!read_text(file, module, module_length) || !read_number(file, text_length, 4)
-        || text_length > BINARY_TEXT_LIMIT) {
-        return LogStatus::corrupt;
-    }
-    std::string text;
-    if (!read_text(file, text, text_length)) {
-        return LogStatus::corrupt;
-    }
-    Timestamp moment = Timestamp::from_value(static_cast<long long>(time));
-    if (!record.assign(moment, static_cast<Level>(level), module, text)) {
-        return LogStatus::corrupt;
-    }
-    return LogStatus::ok;
-}
-
-LogBook LogBook::from_binary(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw LogError(LogStatus::cannot_open, path);
-    }
-    char signature[4];
-    if (!file.read(signature, 4) || std::memcmp(signature, BINARY_SIGNATURE, 4) != 0) {
-        throw LogError(LogStatus::bad_format, path);   // чужой файл отвергается сразу
-    }
-    unsigned long long version = 0;
-    unsigned long long count = 0;
-    if (!read_number(file, version, 2)) {
-        throw LogError(LogStatus::corrupt, path);
-    }
-    if (version != BINARY_VERSION) {
-        throw LogError(LogStatus::bad_format, path);
-    }
-    // Число записей проверяется до того, как под него что-то выделяется.
-    if (!read_number(file, count, 8) || count > BINARY_COUNT_LIMIT) {
-        throw LogError(LogStatus::corrupt, path);
-    }
-    // Записи читаются в новый журнал. Если файл оборван, исключение вылетит
-    // из середины цикла: новый журнал и поток разрушатся сами, а журнал
-    // вызывающего не изменится — до присваивания дело не дойдёт.
-    LogBook book;
-    for (unsigned long long i = 0; i < count; ++i) {
-        LogRecord record;
-        if (read_binary_record(file, record) != LogStatus::ok) {
-            throw LogError(LogStatus::corrupt, path);
-        }
-        book.records_.push_back(record);
-    }
-    book.path_ = path;
-    book.lines_ = static_cast<long>(count);
-    book.loaded_ = true;
-    return book;   // возврат по значению: векторы не копируются
 }
 
 void LogBook::print_load_report() const {
@@ -386,7 +226,11 @@ void LogBook::merge_sort(std::size_t left, std::size_t right, int depth, int& ma
 }
 
 int LogBook::sort_by_time() {
-    buffer_.resize(records_.size());
+    // Временный массив — копия записей, а не resize: resize создал бы
+    // «пустые» записи конструктором по умолчанию, а такого у записи больше
+    // нет — пустая запись нарушала бы её инвариант. Копия сразу нужного
+    // размера, и все её элементы — верные записи.
+    buffer_ = records_;
     int max_depth = 0;
     merge_sort(0, records_.size(), 1, max_depth);
     sorted_ = true;

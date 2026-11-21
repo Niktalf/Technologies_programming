@@ -270,7 +270,7 @@ void Editor::command_scale(const std::vector<std::string>& words) {
     }
     ImageStatus status = image_.scale(size[0], size[1]);
     if (status != ImageStatus::ok) {
-        std::cout << "Resize failed: " << Image::status_text(status) << '\n';
+        std::cout << "Resize failed: " << status_text(status) << '\n';
         return;
     }
     std::cout << "New size: " << image_.width() << " x " << image_.height() << '\n';
@@ -293,7 +293,7 @@ void Editor::command_fill(const std::vector<std::string>& words) {
         std::cout << "Point (" << v[0] << ", " << v[1] << ") is outside the image\n";
         return;
     }
-    Color color = Color::from_rgb(Color::clamp(v[2]), Color::clamp(v[3]), Color::clamp(v[4]));
+    Color color = Color::from_rgb(v[2], v[3], v[4]);   // каналы насыщает сам from_rgb
     print_fill_report(image_.flood_fill(v[0], v[1], color));
 }
 
@@ -347,11 +347,12 @@ void Editor::command_load(const std::vector<std::string>& words) {
     }
     const std::string& path = words[1];
     PpmFormat format = PpmFormat::text;
-    // load читает во временное изображение и перемещает его в image_,
-    // только если файл прочитан целиком: оборванный файл не портит открытое.
-    ImageStatus status = image_.load(path, format);
+    // PpmFile::read читает во временное изображение и перемещает его
+    // в image_, только если файл прочитан целиком: оборванный файл
+    // не портит открытое.
+    ImageStatus status = PpmFile::read(path, image_, format);
     if (status != ImageStatus::ok) {
-        std::cout << "Cannot read " << path << ": " << Image::status_text(status) << '\n';
+        std::cout << "Cannot read " << path << ": " << status_text(status) << '\n';
         return;
     }
     path_ = path;
@@ -378,9 +379,9 @@ void Editor::command_save(const std::vector<std::string>& words) {
             return;
         }
     }
-    ImageStatus status = image_.save(path, format);
+    ImageStatus status = PpmFile::write(path, image_, format);
     if (status != ImageStatus::ok) {
-        std::cout << "Cannot write " << path << ": " << Image::status_text(status) << '\n';
+        std::cout << "Cannot write " << path << ": " << status_text(status) << '\n';
         return;
     }
     path_ = path;
@@ -445,13 +446,19 @@ void Editor::command_colors() {
               << static_cast<int>(static_cast<std::uint8_t>(230 + 40)) << '\n';
     std::cout << "  int and saturation:           " << static_cast<int>(Color::clamp(230 + 40))
               << '\n';
+
+    // Практика 11: from_rgb насыщает сам, и каналы цвета не выходят
+    // за 0..255, что бы ему ни передали.
+    Color wild = Color::from_rgb(300, -20, 128);
+    std::cout << "\nfrom_rgb(300, -20, 128) -> " << static_cast<int>(wild.red()) << ' '
+              << static_cast<int>(wild.green()) << ' ' << static_cast<int>(wild.blue()) << '\n';
 }
 
 // Опыты со временем жизни. Image::trace включает сообщения из конструкторов,
 // деструктора, копий и перемещений; Image::live_count показывает, сколько
 // изображений владеют буфером.
 void Editor::command_demo() {
-    Image::trace = true;
+    Image::set_trace(true);
 
     // Все объекты опытов живут в этом блоке, чтобы сообщения их деструкторов
     // появились до того, как trace выключится.
@@ -504,7 +511,39 @@ void Editor::command_demo() {
         }
     }   // здесь деструкторы moved, made, other, copy, original — в обратном порядке
     std::cout << "End of demo: the objects were destroyed in reverse order of creation.\n";
-    Image::trace = false;
+    Image::set_trace(false);
+    std::cout << '\n';
+    try_to_break();
+}
+
+// Практика 11: попытки нарушить инварианты изображения и цвета открытыми
+// вызовами. Каждая либо отвергнута, либо приведена к допустимому значению.
+void Editor::try_to_break() {
+    std::cout << "7. Trying to break the invariants from outside:\n";
+    Image image(4, 3);
+    std::cout << "  set_pixel(10, 10): " << (image.set_pixel(10, 10, Color::from_rgb(1, 1, 1))
+                                             ? "written" : "rejected, outside") << '\n';
+    Color outside = image.pixel(-1, 0);
+    std::cout << "  pixel(-1, 0): " << static_cast<int>(outside.red()) << ' '
+              << static_cast<int>(outside.green()) << ' ' << static_cast<int>(outside.blue())
+              << " - black, nothing read outside the buffer\n";
+    image.set_pixel(0, 0, Color::from_rgb(999, -5, 128));
+    Color saturated = image.pixel(0, 0);
+    std::cout << "  channels 999 -5 128 stored as " << static_cast<int>(saturated.red()) << ' '
+              << static_cast<int>(saturated.green()) << ' ' << static_cast<int>(saturated.blue())
+              << '\n';
+    ImageStatus status = image.crop(2, 2, 5, 5);
+    std::cout << "  crop past the edge: " << status_text(status) << ", size still "
+              << image.width() << " x " << image.height() << '\n';
+    status = image.scale(100000, 2);
+    std::cout << "  scale to 100000 x 2: " << status_text(status) << ", size still "
+              << image.width() << " x " << image.height() << '\n';
+    try {
+        Image huge(9000, 9000);
+        std::cout << "  9000 x 9000 was created - the invariant is broken!\n";
+    } catch (const std::invalid_argument& error) {
+        std::cout << "  Image(9000, 9000): rejected - " << error.what() << '\n';
+    }
 }
 
 // Создаёт, копирует, перемещает и уничтожает изображения times раз.
@@ -515,7 +554,7 @@ void Editor::command_stress(const std::vector<std::string>& words) {
         std::cout << "stress needs a positive number, e.g. stress 100\n";
         return;
     }
-    Image::trace = false;
+    Image::set_trace(false);
     for (int i = 0; i < times; ++i) {
         Image image(512, 512);
         image.fill_gradient();

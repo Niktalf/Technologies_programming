@@ -6,7 +6,7 @@
 
 #include "store.hpp"
 
-bool JournalFile::trace = false;
+bool JournalFile::trace_ = false;
 int JournalFile::open_count_ = 0;
 
 JournalFile::JournalFile(const std::string& path)
@@ -23,7 +23,7 @@ JournalFile::JournalFile(const std::string& path)
         throw KvError(KvStatus::cannot_open, path);
     }
     ++open_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [JournalFile] opened " << path_ << '\n';
     }
 }
@@ -40,7 +40,7 @@ void JournalFile::close() noexcept {
     std::fclose(file_);
     file_ = nullptr;
     --open_count_;
-    if (trace) {
+    if (trace_) {
         std::cout << "  [JournalFile] flushed and closed " << path_ << '\n';
     }
 }
@@ -65,6 +65,28 @@ JournalFile& JournalFile::operator=(JournalFile&& other) noexcept {
         other.file_ = nullptr;
     }
     return *this;
+}
+
+long JournalFile::recover(std::vector<Record>& records) {
+    rewind_for_reading();
+    Record record;
+    Record::ReadResult result = read_next(record);
+    while (result == Record::ReadResult::record) {
+        records.push_back(record);
+        result = read_next(record);
+    }
+    // Повреждённый хвост — след аварии на середине записи. Он отрезается,
+    // иначе новые записи легли бы после мусора и при следующем открытии
+    // не прочитались бы.
+    if (result == Record::ReadResult::broken) {
+        cut_after_last_record();
+        return 1;
+    }
+    return 0;
+}
+
+void JournalFile::append(const Record& record) {
+    append_bytes(record.encode());
 }
 
 void JournalFile::rewind_for_reading() {
@@ -105,7 +127,7 @@ void JournalFile::cut_after_last_record() {
                 throw KvError(KvStatus::io_error, path_);
             }
             chunk.resize(want);
-            temp.append(chunk);
+            temp.append_bytes(chunk);
             left -= static_cast<long>(want);
         }
     }   // здесь временный файл сброшен на диск и закрыт
@@ -126,7 +148,7 @@ void JournalFile::cut_after_last_record() {
     reading_ = false;
 }
 
-void JournalFile::append(const std::vector<std::uint8_t>& bytes) {
+void JournalFile::append_bytes(const std::vector<std::uint8_t>& bytes) {
     // Между чтением и записью в один поток стандарт C требует fseek.
     // Дописываем с конца целых записей.
     if (reading_) {

@@ -118,7 +118,7 @@ Game::Game(const std::string& path)
 }
 
 void Game::draw() const {
-    hero_.look(map_, monsters_);
+    view_.show(map_, hero_, monsters_);
 }
 
 int Game::spawn_monsters(int n) {
@@ -130,9 +130,9 @@ int Game::spawn_monsters(int n) {
         int x = 1 + std::rand() % (map_.width() - 2);
         int y = 1 + std::rand() % (map_.height() - 2);
         ++attempts;
+        // add сам отказывает, если клетка занята другим монстром.
         if (map_.tile(x, y) == Map::FLOOR && !(x == hero_.x() && y == hero_.y())
-            && monsters_.find(x, y) < 0) {
-            monsters_.add(x, y);
+            && monsters_.add(x, y)) {
             ++placed;
         }
     }
@@ -170,15 +170,13 @@ void Game::command_attack(std::string* argument) {
         return;
     }
     ++turns_;
-    // Ссылка на элемент списка годится только до следующего изменения
-    // списка. Здесь она живёт три строки, до удаления.
-    Monster& target = monsters_.at(index);
-    target.take_damage(hero_.attack());
-    if (target.alive()) {
-        std::cout << "Hit! The monster has " << target.hp() << " health left.\n";
+    // Удар и уборка мёртвого — одним методом списка: игра не может забыть
+    // убрать мёртвого монстра, потому что убирает не она.
+    int left = monsters_.hit(index, hero_.attack());
+    if (left > 0) {
+        std::cout << "Hit! The monster has " << left << " health left.\n";
         return;
     }
-    monsters_.remove(index);
     std::cout << "The monster is defeated. Monsters left: " << monsters_.count() << '\n';
 }
 
@@ -219,7 +217,9 @@ void Game::command_level(const std::string* path) {
                   << "\nThe game goes on at the previous level.\n";
         return;
     }
-    hero_.place_at(map_.start_x(), map_.start_y());
+    // Старт новой карты проходим по её инварианту, поэтому place_at
+    // здесь не откажет.
+    hero_.place_at(map_, map_.start_x(), map_.start_y());
     std::cout << "Level loaded " << *path << ": " << map_.width() << " x " << map_.height()
               << ", monsters " << monsters_.count() << '\n';
     draw();

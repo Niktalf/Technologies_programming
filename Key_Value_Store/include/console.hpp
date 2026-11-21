@@ -48,6 +48,7 @@ private:
     static Result command_genscript(const std::vector<std::string>& words);
     static Result command_record(const std::vector<std::string>& words);
     static Result command_demo();
+    static void try_to_break();
     static Result command_stress(const std::vector<std::string>& words);
     static void print_help();
 

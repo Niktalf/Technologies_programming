@@ -9,16 +9,13 @@ constexpr int SHOWN = 20;
 
 } // namespace
 
-void MonsterList::add(int x, int y) {
-    monsters_.push_back(Monster::at(x, y));   // монстр копируется в конец вектора
-}
-
-void MonsterList::remove(int index) {
-    if (index < 0 || index >= count()) {
-        return;
+bool MonsterList::add(int x, int y) {
+    if (find(x, y) >= 0) {
+        return false;   // второй монстр в той же клетке нарушил бы инвариант
     }
-    monsters_[static_cast<std::size_t>(index)] = monsters_.back();
-    monsters_.pop_back();
+    // emplace_back создаёт монстра прямо в векторе конструктором Monster(x, y).
+    monsters_.emplace_back(x, y);
+    return true;
 }
 
 int MonsterList::find(int x, int y) const {
@@ -31,6 +28,22 @@ int MonsterList::find(int x, int y) const {
     return -1;
 }
 
+int MonsterList::hit(int index, int damage) {
+    if (index < 0 || index >= count() || damage < 0) {
+        return -1;
+    }
+    Monster& target = monsters_[static_cast<std::size_t>(index)];
+    target.take_damage(damage);
+    if (target.alive()) {
+        return target.hp();
+    }
+    // Мёртвый монстр убирается сразу, в том же методе: между ударом
+    // и удалением нет момента, когда инвариант нарушен для вызывающего.
+    monsters_[static_cast<std::size_t>(index)] = monsters_.back();
+    monsters_.pop_back();
+    return 0;
+}
+
 void MonsterList::print() const {
     std::cout << "Monsters: " << count() << '\n';
     for (int i = 0; i < count() && i < SHOWN; ++i) {
@@ -41,4 +54,5 @@ void MonsterList::print() const {
     if (count() > SHOWN) {
         std::cout << "  ... and " << count() - SHOWN << " more\n";
     }
+    std::cout << "Monsters created since the start: " << Monster::created_count() << '\n';
 }

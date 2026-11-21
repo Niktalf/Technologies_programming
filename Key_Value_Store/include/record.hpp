@@ -5,8 +5,9 @@
 #include <string>
 #include <vector>
 
+#include "kvstore.hpp"
+
 class Store;
-enum class KvStatus;
 
 // Запись журнала: тип операции, ключ и значение (практика 2).
 //
@@ -15,6 +16,12 @@ enum class KvStatus;
 // флаги, длина ключа (2 байта), длина значения (4 байта), контрольная
 // сумма, — затем байты ключа и значения. Поэтому журнал, записанный
 // программой на C, читается этой версией, и наоборот.
+//
+// Инвариант: у удаления значение пустое. Длины ключа и значения в инвариант
+// не входят: запись с ключом в 300 байт можно построить и показать командой
+// record, но хранилище её не примет — его apply проверяет valid() раньше,
+// чем что-нибудь пишет. А из файла read читает только записи с верными
+// длинами и контрольной суммой.
 class Record {
 public:
     enum class Operation { put, remove };
@@ -27,8 +34,9 @@ public:
     };
 
     static constexpr std::size_t HEADER_SIZE = 8;
-    static constexpr std::size_t KEY_MAX = 255;
-    static constexpr std::size_t VALUE_MAX = 4096;
+    // Пределы длин — те же, что объявлены клиенту в публичном заголовке.
+    static constexpr std::size_t KEY_MAX = KvStore::KEY_MAX;
+    static constexpr std::size_t VALUE_MAX = KvStore::VALUE_MAX;
 
     // Флаги в первом байте заголовка.
     static constexpr std::uint8_t FLAG_PUT = 1u << 0;

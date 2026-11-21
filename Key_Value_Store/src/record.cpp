@@ -107,7 +107,12 @@ Record::ReadResult Record::read(std::FILE* file, Record& out) {
     const char* text = reinterpret_cast<const char*>(bytes.data()) + HEADER_SIZE;
     out.operation_ = (bytes[0] & FLAG_TOMBSTONE) != 0 ? Operation::remove : Operation::put;
     out.key_.assign(text, key_length);
-    out.value_.assign(text + key_length, value_length);
+    // У удаления значение по инварианту пустое, что бы ни лежало в файле.
+    if (out.operation_ == Operation::put) {
+        out.value_.assign(text + key_length, value_length);
+    } else {
+        out.value_.clear();
+    }
     return ReadResult::record;
 }
 

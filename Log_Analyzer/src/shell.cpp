@@ -8,7 +8,9 @@
 #include <stdexcept>
 #include <utility>
 
+#include "binary_log.hpp"
 #include "file_reader.hpp"
+#include "log_parser.hpp"
 #include "log_generator.hpp"
 #include "log_stats.hpp"
 
@@ -67,7 +69,7 @@ void Shell::print_help() {
               << "  level all | none           - enable all levels or clear them all\n"
               << "  filter                     - show the current filter\n"
               << "  time                       - check the time packing\n"
-              << "  demo                       - object lifetime and an exception\n"
+              << "  demo                       - object lifetime, an exception, invariants\n"
               << "  stress [n]                 - load and destroy the log n times\n"
               << "  help                       - this list\n"
               << "  quit                       - exit\n";
@@ -76,7 +78,7 @@ void Shell::print_help() {
 void Shell::open(const std::string& path) {
     // Временный журнал перемещается в book_: векторы записей переезжают,
     // а не копируются.
-    book_ = LogBook(path);
+    book_ = LogParser::read(path);
 }
 
 bool Shell::require_log() const {
@@ -106,10 +108,10 @@ void Shell::command_load(const std::vector<std::string>& words) {
     }
     Clock::time_point start = Clock::now();
     // Новый журнал строится отдельным объектом. Если файл не открылся,
-    // конструктор бросит исключение, и прежний журнал останется — в версии
-    // на C он к этому моменту был бы уже очищен.
+    // LogParser::read бросит исключение, и прежний журнал останется —
+    // в версии на C он к этому моменту был бы уже очищен.
     try {
-        book_ = LogBook(words[1]);
+        book_ = LogParser::read(words[1]);
     } catch (const LogError& error) {
         std::cout << "Error: " << error.what() << '\n';
         return;
@@ -130,7 +132,7 @@ void Shell::command_bsave(const std::vector<std::string>& words) {
         return;
     }
     Clock::time_point start = Clock::now();
-    LogStatus status = book_.save_binary(words[1]);
+    LogStatus status = BinaryLog::write(book_, words[1]);
     if (status != LogStatus::ok) {
         std::cout << "Cannot save " << words[1] << ": " << status_text(status) << '\n';
         return;
@@ -147,8 +149,8 @@ void Shell::command_bload(const std::vector<std::string>& words) {
     }
     Clock::time_point start = Clock::now();
     try {
-        // from_binary возвращает журнал по значению, и он перемещается в book_.
-        book_ = LogBook::from_binary(words[1]);
+        // BinaryLog::read возвращает журнал по значению, и он перемещается в book_.
+        book_ = BinaryLog::read(words[1]);
     } catch (const LogError& error) {
         std::cout << "Cannot read " << words[1] << ": " << status_text(error.status()) << '\n';
         return;
@@ -376,7 +378,7 @@ void Shell::command_demo() {
         return;
     }
     const std::string& path = book_.path();
-    FileReader::trace = true;
+    FileReader::set_trace(true);
 
     std::cout << "1. A stack object is destroyed when the block ends:\n";
     {
@@ -385,10 +387,10 @@ void Shell::command_demo() {
     }   // здесь деструктор reader закрывает файл
     std::cout << "  after the block, open files: " << FileReader::open_count() << "\n\n";
 
-    std::cout << "2. The log is loaded in the constructor; the file is closed before\n"
-              << "   the constructor returns, and the log lives on:\n";
+    std::cout << "2. The log is read by LogParser; the file is closed before\n"
+              << "   read returns, and the log lives on:\n";
     {
-        LogBook book(path);
+        LogBook book = LogParser::read(path);
         std::cout << "  log created, records: " << book.count()
                   << ", open files: " << FileReader::open_count() << '\n';
     }
@@ -396,7 +398,7 @@ void Shell::command_demo() {
 
     std::cout << "3. An exception in the middle of reading:\n";
     try {
-        LogBook::read_until_failure(path, 3);
+        LogParser::read_until_failure(path, 3);
     } catch (const std::exception& error) {
         std::cout << "  caught: " << error.what() << '\n';
     }
@@ -405,7 +407,7 @@ void Shell::command_demo() {
 
     std::cout << "4. No file - no log object is created:\n";
     try {
-        LogBook book("no-such-file.log");
+        LogBook book = LogParser::read("no-such-file.log");
         std::cout << "  this line is never printed\n";
     } catch (const std::exception& error) {
         std::cout << "  caught: " << error.what() << '\n';
@@ -420,9 +422,45 @@ void Shell::command_demo() {
         FileReader second = std::move(first);
         std::cout << "  after the move, open files: " << FileReader::open_count() << '\n';
     }
-    std::cout << "  after the block, open files: " << FileReader::open_count() << '\n';
+    std::cout << "  after the block, open files: " << FileReader::open_count() << "\n\n";
 
-    FileReader::trace = false;
+    FileReader::set_trace(false);
+    try_to_break();
+}
+
+// Практика 11: попытки создать запись и журнал в неверном состоянии.
+// Каждая отвергнута конструктором — проверять это у вызывающего не нужно.
+void Shell::try_to_break() {
+    std::cout << "6. Trying to break the invariants from outside:\n";
+    Timestamp moment = Timestamp::parse("2026-03-15 10:30:00");
+    struct Attempt {
+        const char* what;
+        Timestamp time;
+        Level level;
+        const char* module;
+    };
+    const Attempt attempts[] = {
+        { "empty module", moment, Level::info, "" },
+        { "level number 7", moment, static_cast<Level>(7), "net" },
+        { "invalid time", Timestamp(), Level::error, "net" },
+        { "year 1500", Timestamp::from_parts(1500, 1, 1, 0, 0, 0), Level::warn, "net" },
+    };
+    for (const Attempt& attempt : attempts) {
+        try {
+            LogRecord record(attempt.time, attempt.level, attempt.module, "text");
+            std::cout << "  " << attempt.what << ": created - the invariant is broken!\n";
+        } catch (const std::invalid_argument& error) {
+            std::cout << "  " << attempt.what << ": rejected - " << error.what() << '\n';
+        }
+    }
+    Timestamp far = Timestamp::from_value(1000000000000000LL);
+    std::cout << "  time from the number 10^15: " << (far.valid() ? "valid" : "invalid") << '\n';
+    try {
+        LogBook book("x.log", std::vector<LogRecord>(), 3, 5);
+        std::cout << "  a log with 5 broken lines out of 3: created - the invariant is broken!\n";
+    } catch (const std::invalid_argument& error) {
+        std::cout << "  a log with 5 broken lines out of 3: rejected - " << error.what() << '\n';
+    }
 }
 
 // Загружает и уничтожает журнал times раз. Память записей освобождает
@@ -438,7 +476,7 @@ void Shell::command_stress(const std::vector<std::string>& words) {
     }
     long records = 0;
     for (long i = 0; i < times; ++i) {
-        LogBook book(book_.path());
+        LogBook book = LogParser::read(book_.path());
         records = book.count();
     }
     std::cout << "Logs loaded and destroyed: " << times << ", records in each: " << records

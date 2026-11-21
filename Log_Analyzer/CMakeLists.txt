@@ -7,10 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(
         ${PROJECT_NAME}_core
+        src/binary_log.cpp
         src/file_reader.cpp
         src/level.cpp
         src/log_book.cpp
         src/log_generator.cpp
+        src/log_parser.cpp
         src/log_record.cpp
         src/log_stats.cpp
         src/log_view.cpp
