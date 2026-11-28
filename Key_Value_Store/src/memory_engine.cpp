@@ -25,8 +25,18 @@ KvStatus MemoryEngine::remove(const std::string& key) {
     return data_.erase(key) > 0 ? KvStatus::ok : KvStatus::not_found;
 }
 
-std::vector<std::pair<std::string, std::string>> MemoryEngine::pairs() const {
-    return std::vector<std::pair<std::string, std::string>>(data_.begin(), data_.end());
+long MemoryEngine::for_each(const Visitor& visit) const {
+    // Цикл идёт, пока visit отвечает true. Ответ false прекращает обход:
+    // остальные пары не перебираются вовсе.
+    long visited = 0;
+    bool going = true;
+    auto pair = data_.begin();
+    while (going && pair != data_.end()) {
+        ++visited;
+        going = visit(pair->first, pair->second);
+        ++pair;
+    }
+    return visited;
 }
 
 std::string MemoryEngine::describe() const {

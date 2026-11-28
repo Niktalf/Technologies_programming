@@ -7,22 +7,26 @@
 
 #include "color.hpp"
 #include "image.hpp"
+#include "pixel_ops.hpp"
 
-// Практика 12: фильтры — иерархия классов.
+// Фильтры — иерархия классов (практика 12).
 //
 // Filter — абстрактный базовый класс: методы apply и name чисто
 // виртуальные (= 0), и объекта «просто фильтра» создать нельзя. Редактор
 // хранит фильтры как указатели на базу и применяет их одним циклом,
-// не зная, какой фильтр какой: что сделает apply, решает настоящий тип
-// объекта.
+// не зная, какой фильтр какой.
 //
 //   Filter
-//   ├── PixelFilter        цвет точки зависит только от её старого цвета
-//   │   ├── InvertFilter
-//   │   ├── GrayFilter
-//   │   ├── BrightnessFilter
-//   │   └── ContrastFilter
-//   └── BlurFilter         цвет точки зависит от соседей
+//   ├── PixelFilter      операция над цветом точки — лямбда, переданная
+//   │                    в конструктор: invert, gray, bright, contrast
+//   ├── VignetteFilter   цвет зависит от места точки: затемнение к краям
+//   └── BlurFilter       цвет зависит от соседей
+//
+// Практика 13: на практике 12 у каждого попиксельного фильтра был свой
+// класс — InvertFilter, GrayFilter, BrightnessFilter, ContrastFilter, —
+// а обход точек был написан в PixelFilter. Теперь классов этих нет:
+// инверсия — это не класс, а лямбда [](Color c) { return c.inverted(); },
+// переданная в PixelFilter. Обход — один на весь проект, в pixel_ops.
 //
 // Фильтр не меняет размеров изображения — это часть договора базового
 // класса. Код, который применяет фильтры, на это рассчитывает: например,
@@ -56,79 +60,50 @@ protected:
     Filter() = default;
 };
 
-// Фильтр, который пересчитывает каждую точку отдельно, по её цвету.
-// Обход изображения у всех таких фильтров один и написан здесь, а
-// наследник задаёт только, во что превращается один цвет.
-//
+// Фильтр, который пересчитывает каждую точку отдельно, по её цвету. Что
+// делать с цветом, задаёт операция — значение типа PixelOp, обычно лямбда.
 // Писать результат можно прямо в то же изображение: новая точка ни от
 // какой другой не зависит.
 class PixelFilter : public Filter {
 public:
+    // Пустая операция — std::invalid_argument: такой фильтр нечем применить.
+    PixelFilter(std::string name, PixelOp op);
+
+    void apply(Image& image) const override { for_each_pixel(image, op_); }
+    std::string name() const override { return name_; }
+
+private:
+    std::string name_;
+    PixelOp op_;
+};
+
+// Виньетка: точки темнеют к краям. На сколько — зависит от расстояния
+// до центра, поэтому операции нужны координаты: for_each_pixel_at.
+// strength — на сколько процентов темнеют углы: 0 — никак, 100 — до чёрного.
+class VignetteFilter : public Filter {
+public:
+    // strength вне 0..100 — std::invalid_argument.
+    explicit VignetteFilter(int strength);
+
     void apply(Image& image) const override;
-
-protected:
-    virtual Color transform(Color color) const = 0;
-};
-
-class InvertFilter : public PixelFilter {
-public:
-    std::string name() const override { return "invert"; }
-
-protected:
-    Color transform(Color color) const override { return color.inverted(); }
-};
-
-class GrayFilter : public PixelFilter {
-public:
-    std::string name() const override { return "gray"; }
-
-protected:
-    Color transform(Color color) const override { return color.to_gray(); }
-};
-
-// Яркость: к каждому каналу прибавляется delta с насыщением.
-class BrightnessFilter : public PixelFilter {
-public:
-    explicit BrightnessFilter(int delta)
-        : delta_(delta) {
-    }
-
     std::string name() const override;
 
-protected:
-    Color transform(Color color) const override;
-
 private:
-    int delta_;
-};
-
-// Контраст: каждый канал отдаляется от середины 128 или приближается
-// к ней. percent = 100 — без изменений, больше — контрастнее, меньше — серее,
-// 0 — всё становится серым 128.
-class ContrastFilter : public PixelFilter {
-public:
-    // Отрицательный процент перевернул бы изображение — это уже не контраст.
-    // Такой фильтр не создаётся: std::invalid_argument.
-    explicit ContrastFilter(int percent);
-
-    std::string name() const override;
-
-protected:
-    Color transform(Color color) const override;
-
-private:
-    int percent_;
+    int strength_;
 };
 
 // Размытие: каждая точка — среднее из квадрата 3 на 3 вокруг неё (у края —
 // из тех соседей, что есть).
 //
+// Практика 13: размытие не выражается через PixelOp — операции над одним
+// цветом мало, ей нужны соседи. Это другой вид обхода: операция получает
+// координаты и сама читает соседей из копии исходного изображения.
+//
 // Чем оно отличается от остальных: новый цвет точки зависит от соседей.
 // Если писать результат в то же изображение, к моменту обработки следующей
 // точки её левый и верхний соседи уже размыты, и размытие «течёт» вправо
 // и вниз. Поэтому соседи читаются из копии исходного изображения, а пишется
-// результат в само изображение. По этой же причине BlurFilter не может быть
-// PixelFilter: тому достаточно одного цвета.
+// результат в само изображение.
 class BlurFilter : public Filter {
 public:
     void apply(Image& image) const override;
@@ -136,11 +111,12 @@ public:
 };
 
 // Фильтр по словам команды начиная с words[position]: invert, gray, blur,
-// bright <число>, contrast <процент>. Сдвигает position за прочитанные
-// слова. При ошибке печатает, что не так, и возвращает пустой указатель.
+// bright <число>, contrast <процент>, vignette <процент>. Сдвигает position
+// за прочитанные слова. При ошибке печатает, что не так, и возвращает
+// пустой указатель.
 //
-// Единственное место, где перечислены виды фильтров. Новый фильтр — новый
-// класс и строчка здесь; цикл применения не меняется.
+// Единственное место, где перечислены фильтры. Новый попиксельный фильтр —
+// одна строчка здесь: имя и лямбда. Ни класса, ни цикла писать не нужно.
 std::unique_ptr<Filter> make_filter(const std::vector<std::string>& words,
                                     std::size_t& position);
 

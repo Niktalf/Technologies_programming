@@ -22,6 +22,10 @@
 // вызывающий мог бы очистить вектор, переставить записи в отсортированном
 // журнале — и sorted() врал бы, а поиск находил бы не то.
 //
+// Практика 13: выборок в журнале больше нет. Журнал отдаёт записи
+// итераторами, а что выбрать, решает условие — функция, переданная
+// в select (record_filter.hpp).
+//
 // Практика 11: журнал больше не читает файлы. На практике 10 в нём был
 // разбор строк текстового журнала и чтение и запись двоичного. Теперь это
 // классы LogParser и BinaryLog, а журнал только хранит записи и даёт к ним
@@ -63,25 +67,20 @@ public:
     // проверять его — дело вызывающего, как и при обращении к массиву в C.
     const LogRecord& at(long index) const { return records_[static_cast<std::size_t>(index)]; }
 
+    // Практика 13: обход записей стандартными алгоритмами и циклом for
+    // по диапазону. Итераторы константные: через них записи только читают.
+    // Изменяемых итераторов журнал не даёт — по той же причине, что и
+    // изменяемой ссылки на вектор (практика 11).
+    using const_iterator = std::vector<LogRecord>::const_iterator;
+    const_iterator begin() const { return records_.begin(); }
+    const_iterator end() const { return records_.end(); }
+
     // Сводка после загрузки: файл, строки, записи, испорченные строки.
     void print_load_report() const;
 
     // Краткая сводка: то же плюс число записей каждого уровня, первая
     // и последняя по времени запись.
     void print_summary() const;
-
-    // Первые и последние SHOW записей, прошедших фильтр.
-    void print_head(const LevelFilter& filter) const;
-    void print_tail(const LevelFilter& filter) const;
-    long count_matching(const LevelFilter& filter) const;
-
-    // Выборки: печатают первые SHOW записей, прошедших фильтр и условие,
-    // и возвращают, сколько подходящих всего. Условие — подстрока в тексте
-    // без учёта регистра, имя модуля или интервал времени (обе границы
-    // включительно).
-    long print_containing(const std::string& word, const LevelFilter& filter) const;
-    long print_module(const std::string& module, const LevelFilter& filter) const;
-    long print_between(Timestamp from, Timestamp to, const LevelFilter& filter) const;
 
     // Самое раннее и самое позднее время. false у пустого журнала.
     bool time_range(Timestamp& first, Timestamp& last) const;
@@ -95,14 +94,6 @@ public:
     long search_not_before(Timestamp moment) const;
 
 private:
-    // Вид выборки. Нужен, чтобы три выборки обошлись одним циклом.
-    enum class Selection { text, module, interval };
-
-    // Единственный цикл выборки. word — образец или имя модуля, from и to —
-    // границы интервала; что из них нужно, решает selection.
-    long print_matching(Selection selection, const std::string& word, Timestamp from,
-                        Timestamp to, const LevelFilter& filter) const;
-
     void merge_sort(std::size_t left, std::size_t right, int depth, int& max_depth);
     void merge(std::size_t left, std::size_t middle, std::size_t right);
     long lower_bound(long low, long high, Timestamp moment) const;

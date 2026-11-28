@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -31,66 +32,63 @@ bool read_parameter(const std::vector<std::string>& words, std::size_t& position
 
 } // namespace
 
-void PixelFilter::apply(Image& image) const {
-    for (int y = 0; y < image.height(); ++y) {
-        for (int x = 0; x < image.width(); ++x) {
-            // transform — виртуальный вызов: что делать с цветом, решает
-            // наследник, а обход один на всех.
-            image.set_pixel(x, y, transform(image.pixel(x, y)));
-        }
+PixelFilter::PixelFilter(std::string name, PixelOp op)
+    : name_(std::move(name)), op_(std::move(op)) {
+    if (!op_) {
+        throw std::invalid_argument("a pixel filter needs an operation");
     }
 }
 
-std::string BrightnessFilter::name() const {
-    return std::string("brightness ") + (delta_ >= 0 ? "+" : "") + std::to_string(delta_);
-}
-
-Color BrightnessFilter::transform(Color color) const {
-    return color.brighten(delta_);   // color — копия, менять её можно
-}
-
-ContrastFilter::ContrastFilter(int percent)
-    : percent_(percent) {
-    if (percent < 0) {
-        throw std::invalid_argument("contrast percent cannot be negative");
+VignetteFilter::VignetteFilter(int strength)
+    : strength_(strength) {
+    if (strength < 0 || strength > 100) {
+        throw std::invalid_argument("vignette strength must be from 0 to 100");
     }
 }
 
-std::string ContrastFilter::name() const {
-    return "contrast " + std::to_string(percent_) + "%";
+std::string VignetteFilter::name() const {
+    return "vignette " + std::to_string(strength_) + "%";
 }
 
-Color ContrastFilter::transform(Color color) const {
-    // Умножение до деления, как везде. from_rgb насыщает: 128 + 200 = 255.
-    constexpr int MIDDLE = 128;
-    return Color::from_rgb(MIDDLE + (color.red() - MIDDLE) * percent_ / 100,
-                           MIDDLE + (color.green() - MIDDLE) * percent_ / 100,
-                           MIDDLE + (color.blue() - MIDDLE) * percent_ / 100);
+void VignetteFilter::apply(Image& image) const {
+    // Центр и квадрат расстояния до угла — числа одного изображения: они
+    // считаются один раз и захватываются в лямбду по значению.
+    double cx = (image.width() - 1) / 2.0;
+    double cy = (image.height() - 1) / 2.0;
+    double corner = cx * cx + cy * cy;
+    double strength = strength_ / 100.0;
+    for_each_pixel_at(image, [cx, cy, corner, strength](Color c, int x, int y) {
+        // Доля расстояния до угла, в квадрате: в центре 0, в углу 1.
+        // Квадрат даёт мягкий переход: середина почти не темнеет.
+        double share = corner > 0 ? ((x - cx) * (x - cx) + (y - cy) * (y - cy)) / corner : 0;
+        double keep = 1.0 - strength * share;
+        return Color::from_rgb(static_cast<int>(c.red() * keep),
+                               static_cast<int>(c.green() * keep),
+                               static_cast<int>(c.blue() * keep));
+    });
 }
 
 void BlurFilter::apply(Image& image) const {
     // Копия исходного изображения: соседи читаются только из неё.
     // Копирующий конструктор Image (практика 10) делает свой буфер.
     const Image source = image;
-    for (int y = 0; y < image.height(); ++y) {
-        for (int x = 0; x < image.width(); ++x) {
-            int sum[3] = { 0, 0, 0 };
-            int count = 0;
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    if (source.inside(x + dx, y + dy)) {
-                        Color c = source.pixel(x + dx, y + dy);
-                        sum[0] += c.red();
-                        sum[1] += c.green();
-                        sum[2] += c.blue();
-                        ++count;
-                    }
+    for_each_pixel_at(image, [&source](Color, int x, int y) {
+        int sum[3] = { 0, 0, 0 };
+        int count = 0;
+        // Квадрат 3 на 3 — маленький обход соседей, не изображения.
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (source.inside(x + dx, y + dy)) {
+                    Color c = source.pixel(x + dx, y + dy);
+                    sum[0] += c.red();
+                    sum[1] += c.green();
+                    sum[2] += c.blue();
+                    ++count;
                 }
             }
-            image.set_pixel(x, y, Color::from_rgb(sum[0] / count, sum[1] / count,
-                                                  sum[2] / count));
         }
-    }
+        return Color::from_rgb(sum[0] / count, sum[1] / count, sum[2] / count);
+    });
 }
 
 std::unique_ptr<Filter> make_filter(const std::vector<std::string>& words,
@@ -104,11 +102,14 @@ std::unique_ptr<Filter> make_filter(const std::vector<std::string>& words,
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     ++position;
+    // Четыре попиксельных фильтра — четыре лямбды. Без захвата — те, у кого
+    // нет параметра; с захватом по значению — те, у кого есть: лямбда
+    // хранит свою копию числа, и make_filter может спокойно закончиться.
     if (name == "invert") {
-        return std::make_unique<InvertFilter>();
+        return std::make_unique<PixelFilter>("invert", [](Color c) { return c.inverted(); });
     }
     if (name == "gray") {
-        return std::make_unique<GrayFilter>();
+        return std::make_unique<PixelFilter>("gray", [](Color c) { return c.to_gray(); });
     }
     if (name == "blur") {
         return std::make_unique<BlurFilter>();
@@ -118,7 +119,11 @@ std::unique_ptr<Filter> make_filter(const std::vector<std::string>& words,
         if (!read_parameter(words, position, "bright", "bright 40", parameter)) {
             return nullptr;
         }
-        return std::make_unique<BrightnessFilter>(parameter);
+        std::string title = std::string("brightness ") + (parameter >= 0 ? "+" : "")
+                            + std::to_string(parameter);
+        return std::make_unique<PixelFilter>(title, [parameter](Color c) {
+            return c.brighten(parameter);   // c — копия, менять её можно
+        });
     }
     if (name == "contrast") {
         if (!read_parameter(words, position, "contrast", "contrast 150", parameter)) {
@@ -128,12 +133,30 @@ std::unique_ptr<Filter> make_filter(const std::vector<std::string>& words,
             std::cout << "The contrast percent cannot be negative\n";
             return nullptr;
         }
-        return std::make_unique<ContrastFilter>(parameter);
+        // Каждый канал отдаляется от середины 128 или приближается к ней.
+        // Умножение до деления; from_rgb насыщает: 128 + 200 = 255.
+        return std::make_unique<PixelFilter>(
+            "contrast " + std::to_string(parameter) + "%", [parameter](Color c) {
+                constexpr int MIDDLE = 128;
+                return Color::from_rgb(MIDDLE + (c.red() - MIDDLE) * parameter / 100,
+                                       MIDDLE + (c.green() - MIDDLE) * parameter / 100,
+                                       MIDDLE + (c.blue() - MIDDLE) * parameter / 100);
+            });
+    }
+    if (name == "vignette") {
+        if (!read_parameter(words, position, "vignette", "vignette 60", parameter)) {
+            return nullptr;
+        }
+        if (parameter < 0 || parameter > 100) {
+            std::cout << "The vignette strength is from 0 to 100\n";
+            return nullptr;
+        }
+        return std::make_unique<VignetteFilter>(parameter);
     }
     std::cout << "Unknown filter: " << name << ". Known: " << filter_names() << '\n';
     return nullptr;
 }
 
 const char* filter_names() {
-    return "invert, gray, bright <n>, contrast <percent>, blur";
+    return "invert, gray, bright <n>, contrast <percent>, vignette <percent>, blur";
 }

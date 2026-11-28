@@ -3,7 +3,14 @@
 #include <iostream>
 
 int SortedPairs::build(const Engine& store) {
-    pairs_ = store.pairs();
+    // Сортировке нужны все пары сразу, поэтому они копируются — но копирует
+    // их тот, кому они нужны, через обход, а не хранилище заранее.
+    pairs_.clear();
+    pairs_.reserve(store.size());
+    store.for_each([this](const std::string& key, const std::string& value) {
+        pairs_.emplace_back(key, value);
+        return true;
+    });
     buffer_.resize(pairs_.size());
     int depth = 0;
     merge_sort(0, pairs_.size(), 1, depth);

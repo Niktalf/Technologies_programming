@@ -60,11 +60,13 @@ std::size_t KvStore::size() const {
     return engine_ ? engine_->size() : 0;
 }
 
-std::vector<std::pair<std::string, std::string>> KvStore::pairs() const {
-    if (!engine_) {
-        return {};
-    }
-    return engine_->pairs();
+long KvStore::for_each(const Visitor& visit) const {
+    return engine_ ? engine_->for_each(visit) : 0;
+}
+
+long KvStore::for_each_in_range(const std::string& from, const std::string& to,
+                                const Visitor& visit) const {
+    return engine_ ? engine_->for_each_in_range(from, to, visit) : 0;
 }
 
 bool KvStore::repaired() const {

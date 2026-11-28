@@ -96,6 +96,8 @@ void Game::print_commands() {
     std::cout << "  level <file> - load a level; spawn <N> - add monsters\n";
     std::cout << "  hit <N>, on/off/toggle <state>\n";
     std::cout << "  help (h), quit (q)\n";
+    std::cout << "  rule <name> - debug: give all monsters the rule chase, flee, stand,\n"
+              << "              wander, drunk (one random step in six) or reset\n";
     std::cout << "Monsters: g - goblin, chases you; b - bat, flies at random;\n";
     std::cout << "s - skeleton, stands guard. They move after each of your steps and hits.\n";
 }
@@ -140,6 +142,33 @@ int Game::spawn_monsters(int n) {
         }
     }
     return placed;
+}
+
+// Отладка правил хода: rule chase | flee | stand | wander | drunk | reset.
+// Меняет правило всем монстрам на карте прямо во время игры.
+void Game::command_rule(const std::string* argument) {
+    if (argument == nullptr) {
+        std::cout << "Usage: rule chase | flee | stand | wander | drunk | reset\n";
+        return;
+    }
+    if (*argument == "drunk") {
+        monsters_.make_all_drunk();
+        std::cout << "All monsters are drunk now: one step in six is random.\n";
+        return;
+    }
+    if (*argument == "reset") {
+        monsters_.reset_rules();
+        std::cout << "Every monster moves by the rule of its kind again.\n";
+        return;
+    }
+    MoveRule rule = rule_by_name(*argument);
+    if (!rule) {
+        std::cout << "Unknown rule: " << *argument
+                  << ". Known: chase, flee, stand, wander, drunk, reset\n";
+        return;
+    }
+    monsters_.set_rule_all(rule);
+    std::cout << "All monsters: " << *argument << ".\n";
 }
 
 bool Game::free_cell(int x, int y) const {
@@ -333,6 +362,8 @@ bool Game::execute(std::vector<std::string>& words) {
         }
     } else if (is_command(name, "attack", "a")) {
         return command_attack(argument);
+    } else if (name == "rule") {
+        command_rule(argument);
     } else if (is_command(name, "look", "l")) {
         draw();
     } else if (is_command(name, "monsters", "m")) {

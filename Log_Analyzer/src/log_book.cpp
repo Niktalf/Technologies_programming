@@ -1,45 +1,8 @@
 #include "log_book.hpp"
 
-#include <cctype>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
-
-namespace {
-
-bool same_char(char a, char b) {
-    return std::tolower(static_cast<unsigned char>(a))
-           == std::tolower(static_cast<unsigned char>(b));
-}
-
-// Есть ли needle в haystack без учёта регистра. Тот же перебор позиций,
-// что text_find_ignore_case в версии на C.
-bool contains_ignore_case(const std::string& haystack, const std::string& needle) {
-    bool found = needle.empty();
-    // Условие цикла нестрогое: последнее вхождение начинается ровно
-    // в позиции size() - needle.size().
-    for (std::size_t start = 0; !found && start + needle.size() <= haystack.size(); ++start) {
-        std::size_t i = 0;
-        while (i < needle.size() && same_char(haystack[start + i], needle[i])) {
-            ++i;
-        }
-        found = i == needle.size();
-    }
-    return found;
-}
-
-bool same_word_ignore_case(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) {
-        return false;
-    }
-    bool same = true;
-    for (std::size_t i = 0; i < a.size() && same; ++i) {
-        same = same_char(a[i], b[i]);
-    }
-    return same;
-}
-
-} // namespace
 
 LogBook::LogBook(std::string path, std::vector<LogRecord> records, long lines, long broken)
     : records_(std::move(records)), path_(std::move(path)), lines_(lines), broken_(broken),
@@ -80,81 +43,6 @@ void LogBook::print_summary() const {
     }
     std::cout << "\nEarliest record: " << records_[first].time().text() << '\n';
     std::cout << "Latest record:   " << records_[last].time().text() << '\n';
-}
-
-void LogBook::print_head(const LevelFilter& filter) const {
-    int printed = 0;
-    for (std::size_t i = 0; i < records_.size() && printed < SHOW; ++i) {
-        if (filter.allows(records_[i].level())) {
-            records_[i].print();
-            ++printed;
-        }
-    }
-}
-
-void LogBook::print_tail(const LevelFilter& filter) const {
-    // Идём с конца, пока не наберём SHOW подходящих записей, — так находим,
-    // с какой записи начинать. Печатаем уже в прямом порядке.
-    std::size_t first = records_.size();
-    int found = 0;
-    while (first > 0 && found < SHOW) {
-        --first;
-        if (filter.allows(records_[first].level())) {
-            ++found;
-        }
-    }
-    for (std::size_t i = first; i < records_.size(); ++i) {
-        if (filter.allows(records_[i].level())) {
-            records_[i].print();
-        }
-    }
-}
-
-long LogBook::count_matching(const LevelFilter& filter) const {
-    long matching = 0;
-    for (const LogRecord& record : records_) {
-        if (filter.allows(record.level())) {
-            ++matching;
-        }
-    }
-    return matching;
-}
-
-// Один цикл на все выборки — вместо трёх одинаковых, как print_matching
-// в версии на C. Там условие передавалось указателем на функцию; здесь
-// выборка называется значением перечисления, а проверка — в одном месте.
-long LogBook::print_matching(Selection selection, const std::string& word, Timestamp from,
-                             Timestamp to, const LevelFilter& filter) const {
-    long found = 0;
-    for (const LogRecord& record : records_) {
-        bool matches = false;
-        if (selection == Selection::text) {
-            matches = contains_ignore_case(record.text(), word);
-        } else if (selection == Selection::module) {
-            matches = same_word_ignore_case(record.module(), word);
-        } else {
-            matches = !record.time().is_before(from) && !to.is_before(record.time());
-        }
-        if (filter.allows(record.level()) && matches) {
-            if (found < SHOW) {
-                record.print();
-            }
-            ++found;
-        }
-    }
-    return found;
-}
-
-long LogBook::print_containing(const std::string& word, const LevelFilter& filter) const {
-    return print_matching(Selection::text, word, Timestamp(), Timestamp(), filter);
-}
-
-long LogBook::print_module(const std::string& module, const LevelFilter& filter) const {
-    return print_matching(Selection::module, module, Timestamp(), Timestamp(), filter);
-}
-
-long LogBook::print_between(Timestamp from, Timestamp to, const LevelFilter& filter) const {
-    return print_matching(Selection::interval, "", from, to, filter);
 }
 
 bool LogBook::time_range(Timestamp& first, Timestamp& last) const {

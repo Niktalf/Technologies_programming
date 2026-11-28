@@ -7,6 +7,7 @@
 #include "level.hpp"
 #include "log_record.hpp"
 #include "log_source.hpp"
+#include "record_filter.hpp"
 
 // Практика 12: отчёт о записях.
 //
@@ -71,6 +72,23 @@ public:
 
 private:
     long by_hour_[24] = {};
+};
+
+// Практика 13: сколько записей подходит под условие. Условие — значение
+// типа Predicate, переданное в конструктор; отчёт хранит свою копию.
+class MatchReport : public LogReport {
+public:
+    MatchReport(Predicate condition, std::string description);
+
+    void accept(const LogRecord& record) override;
+    void print() const override;
+    const char* title() const override { return "matching records"; }
+
+private:
+    Predicate condition_;
+    std::string description_;
+    long matched_ = 0;
+    long total_ = 0;
 };
 
 // Отчёт по имени: levels, modules, hours. Неизвестное имя — пустой указатель.

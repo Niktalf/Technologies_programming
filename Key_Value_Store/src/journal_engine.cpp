@@ -84,13 +84,18 @@ KvStatus JournalEngine::get(const std::string& key, std::string& value) const {
     return KvStatus::ok;
 }
 
-std::vector<std::pair<std::string, std::string>> JournalEngine::pairs() const {
-    std::vector<std::pair<std::string, std::string>> result;
-    result.reserve(data_.size());
-    for (const auto& pair : data_) {
-        result.push_back(pair);
+long JournalEngine::for_each(const Visitor& visit) const {
+    // Цикл идёт, пока visit отвечает true. Ответ false прекращает обход:
+    // остальные пары не перебираются вовсе.
+    long visited = 0;
+    bool going = true;
+    auto pair = data_.begin();
+    while (going && pair != data_.end()) {
+        ++visited;
+        going = visit(pair->first, pair->second);
+        ++pair;
     }
-    return result;
+    return visited;
 }
 
 std::string JournalEngine::describe() const {

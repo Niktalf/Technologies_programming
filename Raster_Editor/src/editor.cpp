@@ -94,6 +94,7 @@ void Editor::print_help() {
               << "  gray                     - shades of gray\n"
               << "  contrast <percent>       - contrast, 100 keeps the image as is\n"
               << "  blur                     - blur, each point is the mean of a 3 x 3 square\n"
+              << "  vignette <percent>       - darken towards the corners, e.g. vignette 60\n"
               << "  filters <f1> <f2> ...    - a chain of filters, e.g. filters gray blur\n"
               << "  size <w> <h>             - create an empty image\n"
               << "  crop <x> <y> <w> <h>     - crop\n"
@@ -195,11 +196,13 @@ void Editor::command_gen(const std::vector<std::string>& words) {
     std::cout << "Image created " << image_.width() << " x " << image_.height() << ".\n";
 }
 
-// Практика 12: invert и bright — тоже фильтры. Команда создаёт объект
-// фильтра и применяет его; на практике 11 это делали методы Image.
+// Практика 13: invert и bright — операции, переданные в обход изображения.
+// На практике 12 команда создавала объект фильтра, на практике 11 это
+// делали методы Image.
 void Editor::command_invert() {
     if (require_image()) {
-        InvertFilter().apply(image_);
+        // Фильтр — лямбда, переданная в обход изображения.
+        for_each_pixel(image_, [](Color c) { return c.inverted(); });
         std::cout << "Inverted.\n";
     }
 }
@@ -221,7 +224,7 @@ void Editor::command_bright(const std::vector<std::string>& words) {
         std::cout << "Not a number: " << words[1] << ". Example: bright 40 or bright -40\n";
         return;
     }
-    BrightnessFilter(delta).apply(image_);
+    for_each_pixel(image_, [delta](Color c) { return c.brighten(delta); });
     std::cout << "Brightness changed by " << delta << ".\n";
 }
 
@@ -648,7 +651,7 @@ bool Editor::execute(const std::vector<std::string>& words) {
     } else if (is_command(name, "bright")) {
         command_bright(words);
     } else if (is_command(name, "gray") || is_command(name, "contrast")
-               || is_command(name, "blur")) {
+               || is_command(name, "blur") || is_command(name, "vignette")) {
         command_single_filter(words);
     } else if (is_command(name, "filters")) {
         command_filters(words);

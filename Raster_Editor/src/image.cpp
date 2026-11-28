@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "pixel_ops.hpp"
+
 namespace {
 
 // Точка, которую ещё предстоит проверить при заливке.
@@ -159,29 +161,28 @@ bool Image::set_pixel(int x, int y, Color color) {
     return true;
 }
 
+// Узоры — тоже обход с координатами: цвет точки зависит только от того,
+// где она стоит. Старый цвет не нужен.
 void Image::fill_gradient() {
     // Слева направо от чёрного к белому. Умножение до деления: иначе все
     // значения, кроме последнего, станут нулём.
-    for (int y = 0; y < height_; ++y) {
-        for (int x = 0; x < width_; ++x) {
-            int level = width_ > 1 ? x * 255 / (width_ - 1) : 0;
-            set_pixel(x, y, Color::from_rgb(level, level, level));
-        }
-    }
+    const int width = width_;
+    for_each_pixel_at(*this, [width](Color, int x, int) {
+        int level = width > 1 ? x * 255 / (width - 1) : 0;
+        return Color::from_rgb(level, level, level);
+    });
 }
 
 void Image::fill_checker(int cell) {
     if (cell < 1) {
         cell = 1;
     }
-    for (int y = 0; y < height_; ++y) {
-        for (int x = 0; x < width_; ++x) {
-            // Номер клетки по x плюс номер по y: чётность суммы даёт шахматный
-            // узор. Если взять только одну из координат, получатся полосы.
-            bool dark = ((x / cell) + (y / cell)) % 2 != 0;
-            set_pixel(x, y, dark ? Color::from_rgb(40, 40, 40) : Color::from_rgb(220, 220, 220));
-        }
-    }
+    for_each_pixel_at(*this, [cell](Color, int x, int y) {
+        // Номер клетки по x плюс номер по y: чётность суммы даёт шахматный
+        // узор. Если взять только одну из координат, получатся полосы.
+        bool dark = ((x / cell) + (y / cell)) % 2 != 0;
+        return dark ? Color::from_rgb(40, 40, 40) : Color::from_rgb(220, 220, 220);
+    });
 }
 
 void Image::fill_stripes(int count) {
@@ -189,18 +190,18 @@ void Image::fill_stripes(int count) {
         { 220, 40, 40 }, { 240, 160, 30 }, { 240, 230, 50 }, { 60, 190, 70 },
         { 40, 170, 220 }, { 60, 70, 200 }, { 150, 60, 190 }, { 230, 230, 230 }
     };
-    const int palette_size = static_cast<int>(sizeof PALETTE / sizeof PALETTE[0]);
+    // constexpr: размер палитры известен при компиляции, и лямбде его не нужно
+    // захватывать — она может пользоваться им, как числом в тексте программы.
+    constexpr int palette_size = static_cast<int>(sizeof PALETTE / sizeof PALETTE[0]);
     if (count < 1) {
         count = 1;
     }
-    for (int y = 0; y < height_; ++y) {
+    const int height = height_;
+    for_each_pixel_at(*this, [count, height](Color, int, int y) {
         // Номер полосы: умножение до деления, как в градиенте.
-        int band = y * count / height_;
-        const std::uint8_t* c = PALETTE[band % palette_size];
-        for (int x = 0; x < width_; ++x) {
-            set_pixel(x, y, Color::from_rgb(c[0], c[1], c[2]));
-        }
-    }
+        const std::uint8_t* c = PALETTE[(y * count / height) % palette_size];
+        return Color::from_rgb(c[0], c[1], c[2]);
+    });
 }
 
 bool Image::min_max(int& darkest, int& brightest) const {
@@ -269,12 +270,13 @@ ImageStatus Image::crop(int x, int y, int width, int height) {
         || x > width_ - width || y > height_ - height) {
         return ImageStatus::bad_argument;
     }
+    // Обход нового изображения: каждая его точка берётся из старого.
+    // Захват this — лямбда читает пиксели этого объекта; она живёт только
+    // внутри вызова, а объект — дольше.
     Image result(width, height);
-    for (int row = 0; row < height; ++row) {
-        for (int col = 0; col < width; ++col) {
-            result.set_pixel(col, row, pixel(x + col, y + row));
-        }
-    }
+    for_each_pixel_at(result, [this, x, y](Color, int col, int row) {
+        return pixel(x + col, y + row);
+    });
     // Готовый результат перемещается на место этого изображения: старый
     // буфер освобождается, новый переходит к *this без копирования.
     *this = std::move(result);
@@ -290,19 +292,18 @@ ImageStatus Image::rotate(int angle) {
     if (turns == 0) {
         return ImageStatus::ok;
     }
+    // Обходим новое изображение и для каждой его точки (rx, ry) находим,
+    // откуда она пришла в старом.
     Image result(turns == 2 ? width_ : height_, turns == 2 ? height_ : width_);
-    for (int y = 0; y < height_; ++y) {
-        for (int x = 0; x < width_; ++x) {
-            Color color = pixel(x, y);
-            if (turns == 1) {
-                result.set_pixel(height_ - 1 - y, x, color);   // 90 по часовой
-            } else if (turns == 2) {
-                result.set_pixel(width_ - 1 - x, height_ - 1 - y, color);
-            } else {
-                result.set_pixel(y, width_ - 1 - x, color);    // 90 против часовой
-            }
+    for_each_pixel_at(result, [this, turns](Color, int rx, int ry) {
+        if (turns == 1) {
+            return pixel(ry, height_ - 1 - rx);              // 90 по часовой
         }
-    }
+        if (turns == 2) {
+            return pixel(width_ - 1 - rx, height_ - 1 - ry);
+        }
+        return pixel(width_ - 1 - ry, rx);                   // 90 против часовой
+    });
     *this = std::move(result);
     return ImageStatus::ok;
 }
@@ -318,11 +319,9 @@ ImageStatus Image::scale(int width, int height) {
     Image result(width, height);
     // Ближайший сосед: для каждой точки нового изображения берём ближайшую
     // точку старого. Умножение до деления.
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            result.set_pixel(x, y, pixel(x * width_ / width, y * height_ / height));
-        }
-    }
+    for_each_pixel_at(result, [this, width, height](Color, int x, int y) {
+        return pixel(x * width_ / width, y * height_ / height);
+    });
     *this = std::move(result);
     return ImageStatus::ok;
 }

@@ -23,7 +23,8 @@ void print_usage(const char* program) {
               << "  " << program << " <file> add <name> <phone>\n"
               << "  " << program << " <file> find <name>\n"
               << "  " << program << " <file> remove <name>\n"
-              << "  " << program << " <file> list\n";
+              << "  " << program << " <file> list\n"
+              << "  " << program << " <file> prefix <start of the name>\n";
 }
 
 int add(KvStore& book, const std::string& name, const std::string& phone) {
@@ -56,18 +57,38 @@ int remove_entry(KvStore& book, const std::string& name) {
     return 0;
 }
 
+void print_entry(const std::string& name, const std::string& phone) {
+    std::cout << "  " << std::left << std::setw(20) << name << std::right << ' ' << phone << '\n';
+}
+
 int list(const KvStore& book) {
-    int shown = 0;
-    for (const auto& entry : book.pairs()) {
-        std::cout << "  " << std::left << std::setw(20) << entry.first << std::right << ' '
-                  << entry.second << '\n';
-        ++shown;
-    }
+    // Практика 13: справочник обходит записи, передавая хранилищу функцию.
+    // Ни вектора пар, ни таблицы он не видит.
+    long shown = book.for_each([](const std::string& name, const std::string& phone) {
+        print_entry(name, phone);
+        return true;
+    });
     if (shown == 0) {
         std::cout << "The phone book is empty.\n";
     } else {
         std::cout << "Entries total: " << shown << '\n';
     }
+    return 0;
+}
+
+// Все имена, начинающиеся с start. Через одну открытую операцию — обход:
+// ни доступа к таблице, ни отдельной операции «поиск по префиксу» в
+// библиотеке для этого не понадобилось.
+int find_prefix(const KvStore& book, const std::string& start) {
+    long found = 0;
+    book.for_each([&start, &found](const std::string& name, const std::string& phone) {
+        if (name.compare(0, start.size(), start) == 0) {
+            print_entry(name, phone);
+            ++found;
+        }
+        return true;
+    });
+    std::cout << "Names starting with \"" << start << "\": " << found << '\n';
     return 0;
 }
 
@@ -95,6 +116,9 @@ int main(int argc, char* argv[]) {
         }
         if (action == "list") {
             return list(book);
+        }
+        if (action == "prefix" && argc >= 4) {
+            return find_prefix(book, argv[3]);
         }
         print_usage(argv[0]);
         return 1;
