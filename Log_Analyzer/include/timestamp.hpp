@@ -40,6 +40,12 @@ public:
     long long value() const { return value_; }
     int hour() const;
 
+    // Практика 14: секунды от 1970-01-01 00:00:00 по настоящему календарю.
+    // value() для этого не годится: упаковка считает в каждом месяце
+    // 31 день, и между 28 февраля и 1 марта у неё прошло бы четыре дня.
+    // Нужно, чтобы считать интервалы. У недействительного момента — -1.
+    long long seconds() const;
+
     // Раньше ли этот момент, чем other.
     bool is_before(Timestamp other) const { return value_ < other.value_; }
 

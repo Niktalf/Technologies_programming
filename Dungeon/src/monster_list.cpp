@@ -1,6 +1,8 @@
 #include "monster_list.hpp"
 
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <utility>
 
 #include "game.hpp"
@@ -22,14 +24,27 @@ bool MonsterList::add(std::unique_ptr<Monster> monster) {
     return true;
 }
 
+// Практика 14: поиск — std::find_if вместо цикла с ранним выходом.
 int MonsterList::find(int x, int y) const {
-    for (int i = 0; i < count(); ++i) {
-        const Monster& monster = at(i);
-        if (monster.x() == x && monster.y() == y) {
-            return i;
-        }
-    }
-    return -1;
+    auto found = std::find_if(monsters_.begin(), monsters_.end(),
+                              [x, y](const std::unique_ptr<Monster>& monster) {
+                                  return monster->x() == x && monster->y() == y;
+                              });
+    return found == monsters_.end() ? -1 : static_cast<int>(found - monsters_.begin());
+}
+
+std::vector<const Monster*> MonsterList::select(const MonsterPredicate& keep) const {
+    // Сначала map: из владеющих указателей — простые указатели только для
+    // чтения. Потом filter: std::copy_if переписывает подходящие.
+    std::vector<const Monster*> all(monsters_.size());
+    std::transform(monsters_.begin(), monsters_.end(), all.begin(),
+                   [](const std::unique_ptr<Monster>& monster) {
+                       return static_cast<const Monster*>(monster.get());
+                   });
+    std::vector<const Monster*> chosen;
+    std::copy_if(all.begin(), all.end(), std::back_inserter(chosen),
+                 [&keep](const Monster* monster) { return keep(*monster); });
+    return chosen;
 }
 
 int MonsterList::hit(int index, int damage) {

@@ -9,6 +9,7 @@ add_library(${PROJECT_NAME}_core
     src/color.cpp
     src/editor.cpp
     src/filter.cpp
+    src/image_stats.cpp
     src/image.cpp
     src/pixel_ops.cpp
     src/ppm_file.cpp

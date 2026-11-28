@@ -1,5 +1,6 @@
 #include "hero.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
@@ -124,12 +125,11 @@ bool Hero::use_item(int number) {
 }
 
 int Hero::state_number(const std::string& word) {
-    for (int i = 0; i < STATE_COUNT; ++i) {
-        if (word == STATE_NAMES[i]) {   // std::string сравнивается по содержимому
-            return i;
-        }
-    }
-    return -1;
+    // std::find идёт по массиву имён и сравнивает каждое с word: std::string
+    // сравнивается с const char* по содержимому.
+    const char* const* end = STATE_NAMES + STATE_COUNT;
+    const char* const* found = std::find(STATE_NAMES, end, word);
+    return found == end ? -1 : static_cast<int>(found - STATE_NAMES);
 }
 
 void Hero::check_state(int number) {

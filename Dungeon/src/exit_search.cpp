@@ -8,16 +8,12 @@ bool ExitSearch::run(const Map& map, int x, int y) {
     visited_.assign(count, 0);
     cells_ = 0;
     depth_ = 0;
+    found_ = false;
+    // Практика 14: выход отмечается в самом обходе, когда до него дошли.
+    // На практике 13 после обхода был ещё цикл по всем клеткам с флагом
+    // «нашли» — ручное накопление, которое здесь просто не нужно.
     visit(map, x, y, 1);
-
-    // Есть ли среди посещённых клеток выход.
-    bool found = false;
-    for (int row = 0; row < map.height() && !found; ++row) {
-        for (int col = 0; col < map.width() && !found; ++col) {
-            found = visited_[cell(col, row)] != 0 && map.tile(col, row) == Map::EXIT;
-        }
-    }
-    return found;
+    return found_;
 }
 
 // Три базовых случая проверяются до рекурсивных вызовов: клетка за границей,
@@ -29,6 +25,9 @@ void ExitSearch::visit(const Map& map, int x, int y, int depth) {
     }
     visited_[cell(x, y)] = 1;
     ++cells_;
+    if (map.tile(x, y) == Map::EXIT) {
+        found_ = true;
+    }
     if (depth > depth_) {
         depth_ = depth;
     }

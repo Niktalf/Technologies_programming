@@ -1,6 +1,10 @@
 #include "journal_engine.hpp"
 
+#include <algorithm>
+#include <cstdio>
 #include <iostream>
+#include <numeric>
+#include <unordered_map>
 
 bool JournalEngine::trace_ = false;
 
@@ -98,8 +102,44 @@ long JournalEngine::for_each(const Visitor& visit) const {
     return visited;
 }
 
+void JournalEngine::garbage(long long& live, long long& total) const {
+    std::vector<Record> records = journal_.records();
+    // map: размер каждой записи в байтах — ровно столько она занимает в файле.
+    std::vector<long long> sizes(records.size());
+    std::transform(records.begin(), records.end(), sizes.begin(), [](const Record& record) {
+        return static_cast<long long>(record.encode().size());
+    });
+    total = std::accumulate(sizes.begin(), sizes.end(), 0LL);
+
+    // Номер последней записи каждого ключа. Группировка словарём: проход
+    // по номерам записей, и более поздняя запись затирает более раннюю.
+    std::vector<std::size_t> numbers(records.size());
+    std::iota(numbers.begin(), numbers.end(), std::size_t{ 0 });
+    std::unordered_map<std::string, std::size_t> last;
+    std::for_each(numbers.begin(), numbers.end(),
+                  [&records, &last](std::size_t i) { last[records[i].key()] = i; });
+
+    // filter + reduce: складываем размеры только актуальных записей.
+    // Надгробие — последняя запись удалённого ключа, но актуальным оно
+    // не считается: пары больше нет, а место надгробие занимает.
+    live = std::accumulate(numbers.begin(), numbers.end(), 0LL,
+                           [&](long long sum, std::size_t i) {
+                               bool current = last[records[i].key()] == i
+                                              && records[i].operation() == Record::Operation::put;
+                               return current ? sum + sizes[i] : sum;
+                           });
+}
+
 std::string JournalEngine::describe() const {
+    long long live = 0;
+    long long total = 0;
+    garbage(live, total);
+    // Пустой журнал: мусора нет, а не «ноль делить на ноль».
+    double share = total > 0 ? 1.0 - static_cast<double>(live) / static_cast<double>(total) : 0.0;
+    char percent[32];
+    std::snprintf(percent, sizeof percent, "%.1f", share * 100.0);
     return "Journal records: " + std::to_string(records_) + ", obsolete among them: "
            + std::to_string(garbage_) + "\nDiscarded as damaged on open: "
-           + std::to_string(broken_) + "\n";
+           + std::to_string(broken_) + "\nGarbage in the journal: " + percent + "% ("
+           + std::to_string(total - live) + " of " + std::to_string(total) + " bytes)\n";
 }

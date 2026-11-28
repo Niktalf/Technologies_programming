@@ -38,6 +38,7 @@ private:
     Result command_list();
     Result command_sorted();
     Result command_keys();
+    Result command_summary();
     Result command_count();
     Result command_prefix(const std::vector<std::string>& words);
     Result command_range(const std::vector<std::string>& words);

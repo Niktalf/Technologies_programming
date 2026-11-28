@@ -25,7 +25,8 @@ add_executable(key_value_sore
     src/main.cpp
     src/parser.cpp
     src/session.cpp
-    src/sorted_pairs.cpp)
+    src/sorted_pairs.cpp
+    src/store_stats.cpp)
 target_include_directories(key_value_sore PRIVATE src)
 target_link_libraries(key_value_sore PRIVATE key_value_sore_core)
 

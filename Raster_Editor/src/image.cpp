@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "image_stats.hpp"
 #include "pixel_ops.hpp"
 
 namespace {
@@ -204,26 +205,6 @@ void Image::fill_stripes(int count) {
     });
 }
 
-bool Image::min_max(int& darkest, int& brightest) const {
-    if (empty()) {
-        return false;
-    }
-    // Начальные значения — из первого пикселя, а не из нуля: иначе минимум
-    // всегда оказался бы нулём.
-    darkest = pixels_[0].luminance();
-    brightest = darkest;
-    for (int i = 1; i < width_ * height_; ++i) {
-        int value = pixels_[i].luminance();
-        if (value < darkest) {
-            darkest = value;
-        }
-        if (value > brightest) {
-            brightest = value;
-        }
-    }
-    return true;
-}
-
 FillReport Image::flood_fill(int x, int y, Color color) {
     FillReport report;
     if (!inside(x, y)) {
@@ -334,7 +315,8 @@ void Image::print_short() const {
     }
     int darkest = 0;
     int brightest = 0;
-    min_max(darkest, brightest);
+    luminance_range(values(pixels(*this), [](Color c) { return c.luminance(); }), darkest,
+                    brightest);
     Color first = pixel(0, 0);
     Color last = pixel(width_ - 1, height_ - 1);
     std::cout << ", top left " << static_cast<int>(first.red()) << ' '

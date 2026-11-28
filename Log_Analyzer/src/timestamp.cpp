@@ -87,6 +87,35 @@ int Timestamp::hour() const {
     return static_cast<int>((value_ / (SECONDS_IN_MINUTE * MINUTES_IN_HOUR)) % HOURS_IN_DAY);
 }
 
+long long Timestamp::seconds() const {
+    if (!valid()) {
+        return -1;
+    }
+    long long value = value_;
+    long long second = value % SECONDS_IN_MINUTE;
+    value /= SECONDS_IN_MINUTE;
+    long long minute = value % MINUTES_IN_HOUR;
+    value /= MINUTES_IN_HOUR;
+    long long hour = value % HOURS_IN_DAY;
+    value /= HOURS_IN_DAY;
+    long long day = value % DAYS_IN_MONTH + 1;
+    value /= DAYS_IN_MONTH;
+    long long month = value % MONTHS_IN_YEAR + 1;
+    long long year = value / MONTHS_IN_YEAR;
+    // Число дней от 1970-01-01 по григорианскому календарю. Год считается
+    // с марта: тогда февраль с его 28 или 29 днями — последний месяц года,
+    // и високосный день не сдвигает остальные. 719468 — число дней
+    // от 0000-03-01 до 1970-01-01.
+    long long y = month <= 2 ? year - 1 : year;
+    long long era = y / 400;
+    long long year_of_era = y - era * 400;
+    long long month_from_march = (month + 9) % 12;
+    long long day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
+    long long day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    long long days = era * 146097 + day_of_era - 719468;
+    return ((days * 24 + hour) * 60 + minute) * 60 + second;
+}
+
 std::string Timestamp::text() const {
     long long value = value_;
     long long second = value % SECONDS_IN_MINUTE;

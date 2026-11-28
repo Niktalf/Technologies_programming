@@ -37,4 +37,5 @@ private:
     int width_ = 0;   // ширина карты, по которой размечен visited_
     int cells_ = 0;
     int depth_ = 0;
+    bool found_ = false;   // дошёл ли обход до выхода
 };
